@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PLCopen XML v2.01 skeleton with one ST function block and one program instance.
+     Replace names, keep the required elements. Validate with scripts/plc_validate.py. -->
+<project xmlns="http://www.plcopen.org/xml/tc6_0201" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <fileHeader companyName="ACME" productName="plc-programming plugin" productVersion="1.0"
+              creationDateTime="2026-01-01T00:00:00"/>
+  <contentHeader name="Demo">
+    <coordinateInfo>
+      <fbd><scaling x="1" y="1"/></fbd>
+      <ld><scaling x="1" y="1"/></ld>
+      <sfc><scaling x="1" y="1"/></sfc>
+    </coordinateInfo>
+  </contentHeader>
+  <types>
+    <dataTypes>
+      <dataType name="E_MotorState">
+        <baseType>
+          <enum>
+            <values>
+              <value name="Idle"/>
+              <value name="Running"/>
+              <value name="Faulted"/>
+            </values>
+          </enum>
+        </baseType>
+      </dataType>
+    </dataTypes>
+    <pous>
+      <pou name="FB_Motor" pouType="functionBlock">
+        <interface>
+          <inputVars>
+            <variable name="xStart"><type><BOOL/></type></variable>
+            <variable name="xStop"><type><BOOL/></type></variable>
+            <variable name="xFeedback"><type><BOOL/></type></variable>
+          </inputVars>
+          <outputVars>
+            <variable name="xRun"><type><BOOL/></type></variable>
+            <variable name="xFault"><type><BOOL/></type></variable>
+          </outputVars>
+          <localVars>
+            <variable name="eState"><type><derived name="E_MotorState"/></type></variable>
+            <variable name="rtStart"><type><derived name="R_TRIG"/></type></variable>
+            <variable name="tonFeedback"><type><derived name="TON"/></type></variable>
+          </localVars>
+        </interface>
+        <body>
+          <ST>
+            <xhtml:p><![CDATA[rtStart(CLK := xStart);
+tonFeedback(IN := (eState = E_MotorState#Running) AND NOT xFeedback, PT := T#3S);
+
+CASE eState OF
+    E_MotorState#Idle:
+        IF rtStart.Q AND NOT xStop THEN
+            eState := E_MotorState#Running;
+        END_IF;
+    E_MotorState#Running:
+        IF xStop THEN
+            eState := E_MotorState#Idle;
+        ELSIF tonFeedback.Q THEN
+            eState := E_MotorState#Faulted;
+        END_IF;
+    E_MotorState#Faulted:
+        IF xStop THEN
+            eState := E_MotorState#Idle;
+        END_IF;
+ELSE
+    eState := E_MotorState#Idle;
+END_CASE;
+
+xRun := eState = E_MotorState#Running;
+xFault := eState = E_MotorState#Faulted;]]></xhtml:p>
+          </ST>
+        </body>
+      </pou>
+      <pou name="Main" pouType="program">
+        <interface>
+          <localVars>
+            <variable name="fbConveyor"><type><derived name="FB_Motor"/></type></variable>
+          </localVars>
+        </interface>
+        <body>
+          <ST>
+            <xhtml:p><![CDATA[fbConveyor(xStart := FALSE, xStop := FALSE, xFeedback := FALSE);]]></xhtml:p>
+          </ST>
+        </body>
+      </pou>
+    </pous>
+  </types>
+  <instances>
+    <configurations>
+      <configuration name="Config">
+        <resource name="Res">
+          <task name="MainTask" priority="1" interval="T#10ms">
+            <pouInstance name="MainInstance" typeName="Main"/>
+          </task>
+        </resource>
+      </configuration>
+    </configurations>
+  </instances>
+</project>

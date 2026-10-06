@@ -1,0 +1,40 @@
+FUNCTION_BLOCK "FB_Conveyor"
+TITLE = 'Conveyor with start delay and feedback supervision'
+{ S7_Optimized_Access := 'TRUE' }
+AUTHOR : plc_programming
+VERSION : 0.1
+   VAR_INPUT
+      start : Bool;   // start request (level)
+      stopOk : Bool;   // TRUE = stop circuit healthy (wired NC)
+      runFeedback : Bool;   // contactor auxiliary contact
+      reset : Bool;   // fault reset (edge)
+   END_VAR
+
+   VAR_OUTPUT
+      runCmd : Bool;
+      fault : Bool;
+   END_VAR
+
+   VAR
+      tonStartDelay : TON_TIME;
+      tonFeedback : TON_TIME;
+      rtReset : R_TRIG;
+   END_VAR
+
+BEGIN
+   REGION Edges and timers (called every cycle, inputs gated)
+      #rtReset(CLK := #reset);
+      #tonStartDelay(IN := #start AND #stopOk AND NOT #fault, PT := T#2S);
+      #tonFeedback(IN := #runCmd AND NOT #runFeedback, PT := T#3S);
+   END_REGION
+
+   REGION Fault latch
+      IF #tonFeedback.Q THEN
+         #fault := TRUE;
+      ELSIF #rtReset.Q AND #stopOk THEN
+         #fault := FALSE;
+      END_IF;
+   END_REGION
+
+   #runCmd := #tonStartDelay.Q AND #stopOk AND NOT #fault;
+END_FUNCTION_BLOCK

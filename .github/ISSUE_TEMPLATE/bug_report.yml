@@ -1,0 +1,45 @@
+name: Bug report
+description: The validator reports something wrong, misses a real error, or a skill gives wrong guidance.
+labels: [bug]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Validator (plc_validate.py / edit hook), Skill guidance, Agent or command, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you got, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: input
+    attributes:
+      label: Minimal input
+      description: >-
+        The smallest PLC source or prompt that shows the problem. Remove anything proprietary
+        (plant names, IP addresses, customer code) before posting.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Validator output or Claude's answer
+      render: text
+  - type: input
+    id: platform
+    attributes:
+      label: PLC platform and version
+      placeholder: TIA Portal V19, S7-1500 FW 3.1 / Machine Expert V2.3, M262
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version and Python version
+      placeholder: plc-programming 0.1.0, Python 3.12

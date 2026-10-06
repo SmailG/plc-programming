@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PLCopen XML v2.01: one LD rung (rising-edge contact -> set coil) plus the matching
+     reset rung. The one-rung body shape was validated against tc6_xml_v201.xsd during
+     research. Coordinates are illustrative; importers may re-route. -->
+<project xmlns="http://www.plcopen.org/xml/tc6_0201" xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <fileHeader companyName="ACME" productName="plc-programming plugin" productVersion="1.0"
+              creationDateTime="2026-01-01T00:00:00"/>
+  <contentHeader name="LdDemo">
+    <coordinateInfo>
+      <fbd><scaling x="1" y="1"/></fbd>
+      <ld><scaling x="1" y="1"/></ld>
+      <sfc><scaling x="1" y="1"/></sfc>
+    </coordinateInfo>
+  </contentHeader>
+  <types>
+    <dataTypes/>
+    <pous>
+      <pou name="LatchMotor" pouType="program">
+        <interface>
+          <localVars>
+            <variable name="Start"><type><BOOL/></type></variable>
+            <variable name="Stop"><type><BOOL/></type></variable>
+            <variable name="Motor"><type><BOOL/></type></variable>
+          </localVars>
+        </interface>
+        <body>
+          <LD>
+            <leftPowerRail localId="1" height="80" width="10">
+              <position x="10" y="10"/>
+              <connectionPointOut formalParameter=""><relPosition x="10" y="20"/></connectionPointOut>
+              <connectionPointOut formalParameter=""><relPosition x="10" y="60"/></connectionPointOut>
+            </leftPowerRail>
+            <contact localId="2" height="20" width="20" edge="rising">
+              <position x="60" y="20"/>
+              <connectionPointIn><relPosition x="0" y="10"/><connection refLocalId="1"/></connectionPointIn>
+              <connectionPointOut><relPosition x="20" y="10"/></connectionPointOut>
+              <variable>Start</variable>
+            </contact>
+            <coil localId="3" height="20" width="20" storage="set">
+              <position x="140" y="20"/>
+              <connectionPointIn><relPosition x="0" y="10"/><connection refLocalId="2"/></connectionPointIn>
+              <connectionPointOut><relPosition x="20" y="10"/></connectionPointOut>
+              <variable>Motor</variable>
+            </coil>
+            <contact localId="4" height="20" width="20">
+              <position x="60" y="60"/>
+              <connectionPointIn><relPosition x="0" y="10"/><connection refLocalId="1"/></connectionPointIn>
+              <connectionPointOut><relPosition x="20" y="10"/></connectionPointOut>
+              <variable>Stop</variable>
+            </contact>
+            <coil localId="5" height="20" width="20" storage="reset">
+              <position x="140" y="60"/>
+              <connectionPointIn><relPosition x="0" y="10"/><connection refLocalId="4"/></connectionPointIn>
+              <connectionPointOut><relPosition x="20" y="10"/></connectionPointOut>
+              <variable>Motor</variable>
+            </coil>
+            <rightPowerRail localId="6" height="80" width="10">
+              <position x="220" y="10"/>
+              <connectionPointIn><relPosition x="0" y="20"/><connection refLocalId="3"/></connectionPointIn>
+              <connectionPointIn><relPosition x="0" y="60"/><connection refLocalId="5"/></connectionPointIn>
+            </rightPowerRail>
+          </LD>
+        </body>
+      </pou>
+    </pous>
+  </types>
+  <instances><configurations/></instances>
+</project>

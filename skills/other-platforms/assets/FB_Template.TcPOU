@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.12">
+  <POU Name="FB_Template" Id="{6f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b}" SpecialFunc="None">
+    <Declaration><![CDATA[// Template: a device FB with an explicit state, a supervised action and a reset method.
+// Give every object a fresh, unique Id GUID before adding it to a project. Needs E_TemplateState.TcDUT.
+FUNCTION_BLOCK FB_Template
+VAR_INPUT
+    bEnable     : BOOL;     // level: FB operates while TRUE
+    bStart      : BOOL;     // edge: request start
+    bFeedback   : BOOL;     // device confirms it is running
+END_VAR
+VAR_OUTPUT
+    bRun        : BOOL;
+    bError      : BOOL;
+    nErrorId    : UDINT;
+END_VAR
+VAR
+    eState      : E_TemplateState := E_TemplateState.Idle;
+    fbStartEdge : R_TRIG;
+    fbFbTimeout : TON;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[fbStartEdge(CLK := bStart);
+fbFbTimeout(IN := (eState = E_TemplateState.Starting), PT := T#5S);
+
+IF NOT bEnable THEN
+    eState := E_TemplateState.Idle;
+END_IF
+
+CASE eState OF
+    E_TemplateState.Idle:
+        IF bEnable AND fbStartEdge.Q THEN
+            eState := E_TemplateState.Starting;
+        END_IF
+    E_TemplateState.Starting:
+        IF bFeedback THEN
+            eState := E_TemplateState.Running;
+        ELSIF fbFbTimeout.Q THEN
+            nErrorId := 16#8001;
+            eState := E_TemplateState.Error;
+        END_IF
+    E_TemplateState.Running:
+        IF NOT bFeedback THEN
+            nErrorId := 16#8002;
+            eState := E_TemplateState.Error;
+        END_IF
+    E_TemplateState.Error:
+        ; // leave only through Reset()
+ELSE
+    eState := E_TemplateState.Idle;
+END_CASE
+
+bRun := (eState = E_TemplateState.Starting) OR (eState = E_TemplateState.Running);
+bError := (eState = E_TemplateState.Error);
+]]></ST>
+    </Implementation>
+    <Method Name="Reset" Id="{7a2b3c4d-5e6f-4071-8b8c-0d1e2f3a4b5c}">
+      <Declaration><![CDATA[METHOD Reset : BOOL
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF eState = E_TemplateState.Error THEN
+    nErrorId := 0;
+    eState := E_TemplateState.Idle;
+    Reset := TRUE;
+END_IF
+]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>

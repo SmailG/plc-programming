@@ -1,0 +1,17 @@
+{
+  "description": "After Claude writes or edits a PLC file, run the structural validator. Errors are fed back to Claude; non-PLC files are ignored. Set PLC_VALIDATE_HOOK=0 to disable.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$(command -v python3 || command -v python)\" && exec \"$P\" \"${CLAUDE_PLUGIN_ROOT}/scripts/plc_validate.py\" --hook || exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

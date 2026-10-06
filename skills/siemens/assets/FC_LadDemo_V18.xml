@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Document>
+  <Engineering version="V18" />
+  <SW.Blocks.FC ID="0">
+    <AttributeList>
+      <Interface><Sections xmlns="http://www.siemens.com/automation/Openness/SW/Interface/v5">
+        <Section Name="Input"><Member Name="In1" Datatype="Bool" /></Section>
+        <Section Name="Output" />
+        <Section Name="InOut" />
+        <Section Name="Temp" />
+        <Section Name="Constant" />
+        <Section Name="Return"><Member Name="Ret_Val" Datatype="Void" /></Section>
+      </Sections></Interface>
+      <MemoryLayout>Optimized</MemoryLayout>
+      <Name>FC_LadDemo</Name>
+      <Number>1</Number>
+      <ProgrammingLanguage>LAD</ProgrammingLanguage>
+    </AttributeList>
+    <ObjectList>
+      <SW.Blocks.CompileUnit ID="3" CompositionName="CompileUnits">
+        <AttributeList>
+          <NetworkSource><FlgNet xmlns="http://www.siemens.com/automation/Openness/SW/NetworkSource/FlgNet/v4">
+            <Parts>
+              <Access Scope="LocalVariable" UId="21"><Symbol><Component Name="In1" /></Symbol></Access>
+              <Part Name="Coil" UId="22" />
+            </Parts>
+            <Wires>
+              <Wire UId="23"><IdentCon UId="21" /><NameCon UId="22" Name="operand" /></Wire>
+            </Wires>
+          </FlgNet></NetworkSource>
+          <ProgrammingLanguage>LAD</ProgrammingLanguage>
+        </AttributeList>
+      </SW.Blocks.CompileUnit>
+    </ObjectList>
+  </SW.Blocks.FC>
+</Document>

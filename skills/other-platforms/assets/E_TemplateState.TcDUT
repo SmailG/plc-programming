@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4026.12">
+  <DUT Name="E_TemplateState" Id="{8b3c4d5e-6f70-4182-9c9d-1e2f3a4b5c6d}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+TYPE E_TemplateState :
+(
+    Idle     := 0,
+    Starting := 1,
+    Running  := 2,
+    Error    := 3
+);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>
