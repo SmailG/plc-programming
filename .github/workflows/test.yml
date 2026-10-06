@@ -7,7 +7,8 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moves to Ubuntu 26 on 2026-10-19, which may not offer Python 3.9.
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         # 3.9 is the oldest version the README promises; the validator uses only the stdlib.
