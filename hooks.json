@@ -1,0 +1,16 @@
+{
+  "plc-validator": {
+    "PostToolUse": [
+      {
+        "matcher": "write_to_file|replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "P=\"$(command -v python3 || command -v python)\" && exec \"$P\" \"./scripts/plc_validate.py\" --hook || exit 0",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

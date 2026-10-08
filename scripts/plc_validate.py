@@ -2,7 +2,7 @@
 """Structural validator for PLC source and exchange files. Standard library only.
 
     plc_validate.py FILE_OR_DIR... [--format FMT] [--xsd SCHEMA.xsd] [--json] [--strict]
-    plc_validate.py --hook      (Claude Code PostToolUse hook: reads the event on stdin)
+    plc_validate.py --hook      (Claude Code / Antigravity PostToolUse hook: reads the event on stdin)
 
 Recognised: IEC ST / Siemens SCL (.st .scl), SIMATIC SD (.s7dcl), PLCopen XML TC6
 v2.0/v2.01, IEC 61131-10, SimaticML, TwinCAT (.TcPOU .TcDUT .TcGVL .TcIO), Rockwell
@@ -161,7 +161,15 @@ def hook_main() -> int:
     except (json.JSONDecodeError, ValueError):
         return 0
     tool_input = event.get("tool_input") or {}
-    raw = tool_input.get("file_path") or tool_input.get("notebook_path")
+    tool_call = event.get("toolCall") or {}
+    tool_args = tool_call.get("args") or {}
+    raw = (
+        tool_input.get("file_path")
+        or tool_input.get("notebook_path")
+        or tool_args.get("TargetFile")
+        or tool_args.get("TargetFilePath")
+        or tool_args.get("path")
+    )
     if not raw:
         return 0
     path = Path(raw)
@@ -186,6 +194,9 @@ def hook_main() -> int:
     if warnings_:
         ctx = f"plc_validate ({fmt}) warnings for {path.name}:\n" + "\n".join(f.format(path.name) for f in warnings_)
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": ctx}}))
+    elif "toolCall" in event or "conversationId" in event:
+        # Antigravity PostToolUse hook expects an empty JSON object on stdout
+        print("{}")
     return 0
 
 
@@ -196,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--xsd", type=Path, help="also validate XML against this schema (xmllint or lxml)")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--strict", action="store_true", help="warnings fail the run")
-    ap.add_argument("--hook", action="store_true", help="run as a Claude Code PostToolUse hook")
+    ap.add_argument("--hook", action="store_true", help="run as a Claude Code or Antigravity PostToolUse hook")
     args = ap.parse_args(argv)
     if args.hook:
         return hook_main()

@@ -11,7 +11,7 @@ The target is `$ARGUMENTS`. If it is empty, review the PLC files changed in the 
 tree (`git status` / `git diff --name-only`). If there are none, ask what to review.
 
 1. **List the files in scope and their detected formats:**
-   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plc_validate.py --json <paths>`.
+   `python3 "${CLAUDE_PLUGIN_ROOT:-scripts}/plc_validate.py" --json <paths>`.
 2. **Delegate to the `plc-reviewer` agent.** Pass the file list, the platform and version
    if known, any focus the user named (for example "interlocks" or "Modbus"), and the
    validator's JSON output. For large projects, split by program or area and run the

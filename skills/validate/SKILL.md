@@ -11,7 +11,7 @@ allowed-tools: Bash(python3 *plc_validate.py*)
 Run:
 
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/plc_validate.py" $ARGUMENTS
+python3 "${CLAUDE_PLUGIN_ROOT:-scripts}/plc_validate.py" $ARGUMENTS
 ```
 
 If `$ARGUMENTS` is empty, use the current directory.
