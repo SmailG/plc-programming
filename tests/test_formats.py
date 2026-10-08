@@ -494,6 +494,36 @@ class CliAndHook(unittest.TestCase):
             csvf.write_text("Name\nA\nA\n")
             self.assertEqual(self._hook(csvf).returncode, 0)
 
+    def test_hook_antigravity_payload(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = Path(d) / "p.st"
+            bad.write_text("IF a THEN\n  b := 1;\n")
+            event_bad = {
+                "conversationId": "test-123",
+                "toolCall": {"name": "write_to_file", "args": {"TargetFile": str(bad)}},
+            }
+            r_bad = subprocess.run([sys.executable, str(self.SCRIPT), "--hook"], input=json.dumps(event_bad), capture_output=True, text=True)
+            self.assertEqual(r_bad.returncode, 2)
+            self.assertIn("ST002", r_bad.stderr)
+
+            good = Path(d) / "g.st"
+            good.write_text("x := 1;\n")
+            event_good = {
+                "conversationId": "test-123",
+                "toolCall": {"name": "write_to_file", "args": {"TargetFile": str(good)}},
+            }
+            r_good = subprocess.run([sys.executable, str(self.SCRIPT), "--hook"], input=json.dumps(event_good), capture_output=True, text=True)
+            self.assertEqual(r_good.returncode, 0)
+            self.assertEqual(r_good.stdout.strip(), "{}")
+
+            replace_good = {
+                "conversationId": "test-123",
+                "toolCall": {"name": "replace_file_content", "args": {"TargetFile": str(good)}},
+            }
+            r_replace = subprocess.run([sys.executable, str(self.SCRIPT), "--hook"], input=json.dumps(replace_good), capture_output=True, text=True)
+            self.assertEqual(r_replace.returncode, 0)
+            self.assertEqual(r_replace.stdout.strip(), "{}")
+
     def test_cli_exit_codes_and_json(self):
         with tempfile.TemporaryDirectory() as d:
             good = Path(d) / "g.st"

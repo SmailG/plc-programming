@@ -1,0 +1,27 @@
+{
+  "name": "plc-programming",
+  "displayName": "PLC Programming",
+  "version": "0.1.0",
+  "description": "PLC programming across IEC 61131-3 (ST, LD, FBD, SFC, IL), PLCopen XML / IEC 61131-10, Siemens TIA, Schneider, CODESYS, TwinCAT, ABB Freelance, Rockwell L5X/L5K, IEC 61499, AutomationML, DEXPI, PackML/ISA-88 and OPC UA with a stdlib-only structural validator.",
+  "author": {
+    "name": "SmailG",
+    "url": "https://github.com/SmailG"
+  },
+  "homepage": "https://github.com/SmailG/plc-programming",
+  "repository": "https://github.com/SmailG/plc-programming",
+  "license": "MIT",
+  "keywords": [
+    "plc",
+    "iec-61131-3",
+    "plcopen",
+    "siemens",
+    "tia-portal",
+    "schneider",
+    "codesys",
+    "twincat",
+    "rockwell",
+    "iec-61499",
+    "automationml",
+    "packml"
+  ]
+}

@@ -1,6 +1,6 @@
-# plc-programming: a Claude Code plugin
+# plc-programming: a Claude Code & Antigravity plugin
 
-This plugin lets Claude **design, write, extend, convert, review and debug PLC programs**
+This plugin lets AI coding assistants (Claude Code, Antigravity / Gemini) **design, write, extend, convert, review and debug PLC programs**
 through conversation, backed by standards knowledge that was checked against sources
 (September 2026) and by a validator that uses only the Python standard library.
 
@@ -10,6 +10,8 @@ major platforms.
 
 ## Install
 
+### Claude Code
+
 ```bash
 claude plugin marketplace add SmailG/plc-programming
 claude plugin install plc-programming@plc-programming
@@ -17,6 +19,20 @@ claude plugin install plc-programming@plc-programming
 
 For development without installing, run `claude --plugin-dir .` from a checkout of this
 repository.
+
+### Antigravity / Gemini
+
+Install globally across all workspaces:
+
+```bash
+git clone https://github.com/SmailG/plc-programming.git ~/.gemini/config/plugins/plc-programming
+```
+
+Or for a single workspace:
+
+```bash
+git clone https://github.com/SmailG/plc-programming.git .agents/plugins/plc-programming
+```
 
 ## What is inside
 
@@ -36,7 +52,7 @@ repository.
 | `/plc-programming:review` | user only | ranked review by the `plc-reviewer` agent |
 | `/plc-programming:validate` | user only | run the validator and explain the findings |
 | `plc-reviewer` agent | delegated | read-only review against the checklist in `skills/develop/references/review-checklist.md` |
-| PostToolUse hook | automatic | validates every PLC file Claude writes or edits; errors are fed back to Claude. Set `PLC_VALIDATE_HOOK=0` to disable it |
+| PostToolUse hook | automatic | validates every PLC file written or edited (Claude Code and Antigravity); errors are fed back. Set `PLC_VALIDATE_HOOK=0` to disable it |
 
 ## The validator
 
