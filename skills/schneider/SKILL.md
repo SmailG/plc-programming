@@ -97,6 +97,11 @@ breakpoints**.
 - [references/exchange-files.md](references/exchange-files.md): Machine Expert
   PLCopenXML limits, Control Expert XEF/ZEF/XSY with a skeleton, Machine Expert – Basic.
 
+Machine Expert M241/M251/M262 programs are `.project` files (CODESYS 3.5). To read one
+without the IDE (ST text, inventory, graphical POUs as a lead), see
+[../other-platforms/references/codesys-project-files.md](../other-platforms/references/codesys-project-files.md):
+undocumented format, reverse-engineered, prefer a PLCopen XML export when you can get one.
+
 Language syntax, pragmas and Static Analysis for Machine Expert are the CODESYS ones:
 [../other-platforms/references/codesys.md](../other-platforms/references/codesys.md).
 Validate XEF/XSY and PLCopenXML with
