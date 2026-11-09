@@ -45,7 +45,7 @@ git clone https://github.com/SmailG/plc-programming.git .agents/plugins/plc-prog
 | `schneider` skill | automatic | Machine Expert (M241/M251/M262), Control Expert (M340/M580), Automation Expert, Modbus, EtherNet/IP, OPC UA |
 | `iec-61131-3` skill | automatic | Ed.2–Ed.4, the five languages, POUs, OOP, data types, the standard library, PLCopen guidelines, Motion and Safety |
 | `exchange-formats` skill | automatic | PLCopen XML (TC6 v2.0/v2.01), IEC 61131-10, AutomationML (IEC 62714), DEXPI / ISO 15926 |
-| `other-platforms` skill | automatic | Beckhoff TwinCAT, CODESYS (incl. reading a binary `.project` offline), ABB Freelance (PRT/CSV) / AC500 / 800xA, Rockwell L5X/L5K |
+| `other-platforms` skill | automatic | Beckhoff TwinCAT, CODESYS (incl. reading a binary `.project` offline: ST, build identity, version diff, cross-reference), ABB Freelance (PRT/CSV) / AC500 / 800xA, Rockwell L5X/L5K |
 | `iec-61499` skill | automatic | event-driven FBs, ECC, 4diac file formats |
 | `packml-isa88-opcua` skill | automatic | PackML states and PackTags, ISA-88 / IEC 61512, OPC UA (OPC 30000/30001/30050) |
 | `/plc-programming:new-pou` | user only | scaffold a POU for a chosen platform and format |
@@ -93,11 +93,13 @@ python3 scripts/codesys_project.py xref project.project <name>
 Reads a CODESYS 3.5 / EcoStruxure Machine Expert `.project` without the IDE (standard
 library only, Python 3.9+). **The format is undocumented**: the reader is reverse-engineered
 and was checked on Machine Expert V2.x files only. ST text and the object inventory are
-decoded; graphical (LD/FBD) records are listed with every interpretation marked as a
-heuristic, and the wiring is not decoded. `info` prints each application's CodeId / DataId
-(a lead to which saved project the controller runs; the IDE's comparison decides) and the last save time; `diff` compares
-two versions of a POU or of the whole project with ids and offsets left out; `xref` lists every
-use of a name, by name only (heuristic). Prefer a PLCopen XML export from the IDE when you
+decoded (`dump-st` writes every ST POU and every GVL and DUT declaration); graphical (LD/FBD)
+records are listed with every interpretation marked as a heuristic, and the wiring is not
+decoded. `info` prints each application's CodeId / DataId (a lead to which saved project the
+controller runs; the IDE's comparison decides) and the last save time; `diff` compares two
+versions of a POU or of the whole project with ids and offsets left out; `xref` lists every use
+of a name, by name only (heuristic). Damaged, encrypted or oversized zip entries are reported,
+not crashed on. Prefer a PLCopen XML export from the IDE when you
 can get one, and verify graphical logic in the IDE. Details:
 [codesys-project-files.md](skills/other-platforms/references/codesys-project-files.md).
 
