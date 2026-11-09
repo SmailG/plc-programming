@@ -5,6 +5,9 @@
     codesys_project.py st PROJECT NAME_OR_GUID [--decl | --impl]
     codesys_project.py dump-st PROJECT OUTDIR
     codesys_project.py graph PROJECT NAME_OR_GUID [--json]
+    codesys_project.py info PROJECT [--json]
+    codesys_project.py diff OLD NEW [NAME_OR_GUID] [--json]
+    codesys_project.py xref PROJECT NAME [--json]
 
 The `.project` format is undocumented; this reader is reverse-engineered and was checked
 on Machine Expert V2.x projects only. ST text and the object inventory are decoded from
@@ -13,7 +16,13 @@ and ids, and every interpretation is marked as a heuristic. Prefer a PLCopen XML
 from the IDE when you can get one, and confirm graphical logic in the IDE before acting
 on it. See skills/other-platforms/references/codesys-project-files.md.
 
-Exit: 0 clean, 1 result printed but some objects had problems, 2 usage or unreadable input.
+`info` prints each application's CodeId / DataId (the build identity) and the project's last
+save time. `diff` compares two versions: with a POU it prints the unified diff of its text or
+of its decoded graph with ids and offsets left out; without one it lists the objects added,
+removed and changed. `xref` lists every ST and LD/FBD use of a name, by name only (heuristic).
+
+Exit: 0 clean (a difference between two projects is not a problem), 1 result printed but some
+objects had problems, 2 usage or unreadable input.
 Standard library only; Python 3.9 or later.
 """
 
@@ -27,9 +36,11 @@ from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from codesysproj import buildinfo, diff, xref  # noqa: E402
 from codesysproj.binary import FormatError  # noqa: E402
 from codesysproj.export import dump_st  # noqa: E402
-from codesysproj.graph import decode_graph, graph_to_dict, render_graph_text  # noqa: E402
+from codesysproj.graph import decode_graph  # noqa: E402
+from codesysproj.graphview import graph_to_dict, render_graph_text  # noqa: E402
 from codesysproj.project import (  # noqa: E402
     KIND_GRAPHICAL, KIND_ST, KINDS, ObjectRecord, Project, find_objects, load_project,
 )
@@ -122,6 +133,53 @@ def cmd_graph(project: Project, args: argparse.Namespace) -> int:
     return EXIT_PROBLEMS if (report_problems([rec]) or result.notes) else EXIT_OK
 
 
+def cmd_info(args: argparse.Namespace) -> int:
+    info = buildinfo.read_info(args.project)
+    print(json.dumps(buildinfo.info_to_dict(info), indent=2, ensure_ascii=False) if args.json
+          else buildinfo.render_info_text(info))
+    for note in info.notes:
+        print("NOTE %s" % note, file=sys.stderr)
+    return EXIT_PROBLEMS if info.notes else EXIT_OK
+
+
+def resolve_in(project: Project, query: str, label: str) -> ObjectRecord:
+    """The one object `query` names in this version of the project; the error names the version."""
+    if not find_objects(project, query):
+        raise FormatError("%r not found in %s (%s)" % (query, label, project.path))
+    rec = resolve_one(project, query)
+    if rec.kind not in diff.COMPARABLE_KINDS:
+        raise FormatError("%s (%s) is kind %r in %s: there is nothing to compare" % (rec.guid, rec.name, rec.kind, label))
+    return rec
+
+
+def report_notes(notes: List[str]) -> int:
+    for note in notes:
+        print("NOTE %s" % note, file=sys.stderr)
+    return len(notes)
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    old, new = load_project(args.old), load_project(args.new)
+    if args.target is None:
+        result = diff.project_diff(old, new)
+        print(json.dumps(diff.project_diff_to_dict(result), indent=2, ensure_ascii=False) if args.json
+              else diff.render_project_diff(result))
+        problems = report_problems(old.records()) + report_problems(new.records())
+        return EXIT_PROBLEMS if problems or report_notes(result.notes) else EXIT_OK
+    a, b = resolve_in(old, args.target, "OLD"), resolve_in(new, args.target, "NEW")
+    result = diff.object_diff(old, a, new, b)
+    print(json.dumps(diff.object_diff_to_dict(result), indent=2, ensure_ascii=False) if args.json
+          else diff.render_object_diff(result))
+    return EXIT_PROBLEMS if report_problems([a, b]) or report_notes(result.notes) else EXIT_OK
+
+
+def cmd_xref(project: Project, args: argparse.Namespace) -> int:
+    result = xref.find_references(project, args.name)
+    print(json.dumps(xref.xref_to_dict(result), indent=2, ensure_ascii=False) if args.json
+          else xref.render_xref_text(result))
+    return EXIT_PROBLEMS if report_problems(project.records()) or result.notes else EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codesys_project.py", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -142,15 +200,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_graph.add_argument("project")
     p_graph.add_argument("target", help="object name, guid or unique guid prefix (8+ characters)")
     p_graph.add_argument("--json", action="store_true")
+    p_info = sub.add_parser("info", help="CodeId / DataId per device application, and the last save time")
+    p_info.add_argument("project")
+    p_info.add_argument("--json", action="store_true")
+    p_diff = sub.add_parser("diff", help="what changed between two versions: one POU, or every object")
+    p_diff.add_argument("old")
+    p_diff.add_argument("new")
+    p_diff.add_argument("target", nargs="?", help="object name, guid or unique guid prefix; omit to list every change")
+    p_diff.add_argument("--json", action="store_true")
+    p_xref = sub.add_parser("xref", help="every ST and LD/FBD use of a variable, instance or type name (heuristic)")
+    p_xref.add_argument("project")
+    p_xref.add_argument("name", help="a name or dotted path such as Gvl.Counter; case-insensitive")
+    p_xref.add_argument("--json", action="store_true")
     return parser
 
 
-COMMANDS = {"list": cmd_list, "st": cmd_st, "dump-st": cmd_dump_st, "graph": cmd_graph}
+COMMANDS = {"list": cmd_list, "st": cmd_st, "dump-st": cmd_dump_st, "graph": cmd_graph, "xref": cmd_xref}
+STANDALONE = {"info": cmd_info, "diff": cmd_diff}  # load their own project(s)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.command in STANDALONE:
+            return STANDALONE[args.command](args)
         return COMMANDS[args.command](load_project(args.project), args)
     except FormatError as exc:
         print("error: %s" % exc, file=sys.stderr)

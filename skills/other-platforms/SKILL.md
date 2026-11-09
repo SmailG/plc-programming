@@ -49,7 +49,10 @@ checked on Machine Expert V2.x files only.
 - `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/codesys_project.py list <file.project>` inventories
   the objects; `st <file.project> <name|guid>` prints a POU's declaration and implementation;
   `dump-st <file.project> <outdir>` writes every ST POU; `graph <file.project> <name|guid>`
-  lists the element records of an LD/FBD POU.
+  lists the element records of an LD/FBD POU; `info <file.project>` prints each application's
+  CodeId / DataId and the last save time (which saved project matches a running PLC);
+  `diff <old> <new> [<name|guid>]` compares two versions; `xref <file.project> <name>` lists every
+  use of a name (heuristic, by name only).
 - **Prefer a PLCopen XML export from the IDE when one can be had.** Use the reader for ST
   text, inventories and as a lead, and **verify graphical wiring in the IDE** before acting
   on `graph`: wiring is not decoded.

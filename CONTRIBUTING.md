@@ -12,9 +12,9 @@ privately, as described in [SECURITY.md](SECURITY.md). Pull requests use the tem
 | `agents/plc-reviewer.md` | Read-only reviewer used by `/plc-programming:review` |
 | `hooks/hooks.json` | PostToolUse hook that runs the validator on every file Claude writes or edits |
 | `scripts/plc_validate.py` | Validator CLI and hook entry point |
-| `scripts/codesys_project.py` | Offline reader for CODESYS 3.5 / Machine Expert `.project` files (`list`, `st`, `dump-st`, `graph`); `scripts/codesysproj/` holds `binary.py` (varint, string table), `project.py` (objects, kinds, text), `graph.py` (LD/FBD records), `export.py` (`dump-st`) |
+| `scripts/codesys_project.py` | Offline reader for CODESYS 3.5 / Machine Expert `.project` files (`list`, `st`, `dump-st`, `graph`, `info`, `diff`, `xref`); `scripts/codesysproj/` holds `binary.py` (varint, string table), `project.py` (objects, kinds, text), `graph.py` (LD/FBD records) and `graphview.py` (their text and JSON), `export.py` (`dump-st`), `buildinfo.py` (`info`), `diff.py` (`diff`), `xref.py` and `stscan.py` (`xref`) |
 | `scripts/plccheck/` | One module per format (`st.py`, `plcopen.py`, `simaticml.py`, `twincat.py`, `logix.py`, `schneider.py`, `iec61499.py`, `aml.py`, `dexpi.py`, `tabular.py`); `findings.py` holds the finding type, `xmlutil.py` the line-numbered XML parser |
-| `tests/` | `test_st.py`, `test_formats.py` (validator rules), `test_codesys_project.py` (the `.project` reader, on synthetic projects only), `test_skills.py` (frontmatter, templates, every `iecst` block lints clean) |
+| `tests/` | `test_st.py`, `test_formats.py` (validator rules), `test_codesys_project.py` and `test_codesys_tools.py` (the `.project` reader and its `info`, `diff` and `xref`, on synthetic projects only), `test_skills.py` (frontmatter, templates, every `iecst` block lints clean) |
 | `evals/` | `claude plugin eval` cases comparing the plugin against a no-plugin baseline |
 
 ## Rules

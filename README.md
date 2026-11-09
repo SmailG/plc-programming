@@ -85,13 +85,19 @@ python3 scripts/codesys_project.py list project.project
 python3 scripts/codesys_project.py st project.project <name|guid>
 python3 scripts/codesys_project.py dump-st project.project out/
 python3 scripts/codesys_project.py graph project.project <name|guid> [--json]
+python3 scripts/codesys_project.py info project.project
+python3 scripts/codesys_project.py diff old.project new.project [<name|guid>]
+python3 scripts/codesys_project.py xref project.project <name>
 ```
 
 Reads a CODESYS 3.5 / EcoStruxure Machine Expert `.project` without the IDE (standard
 library only, Python 3.9+). **The format is undocumented**: the reader is reverse-engineered
 and was checked on Machine Expert V2.x files only. ST text and the object inventory are
 decoded; graphical (LD/FBD) records are listed with every interpretation marked as a
-heuristic, and the wiring is not decoded. Prefer a PLCopen XML export from the IDE when you
+heuristic, and the wiring is not decoded. `info` prints each application's CodeId / DataId
+(which saved project matches the running controller) and the last save time; `diff` compares
+two versions of a POU or of the whole project with ids and offsets left out; `xref` lists every
+use of a name, by name only (heuristic). Prefer a PLCopen XML export from the IDE when you
 can get one, and verify graphical logic in the IDE. Details:
 [codesys-project-files.md](skills/other-platforms/references/codesys-project-files.md).
 

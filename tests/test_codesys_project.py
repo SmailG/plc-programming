@@ -25,7 +25,7 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(HERE))
 
 import codesys_project  # noqa: E402
-from codesysproj import export, graph, project  # noqa: E402
+from codesysproj import export, graph, graphview, project  # noqa: E402
 from codesysproj.binary import FormatError, parse_string_table, read_varint  # noqa: E402
 from codesys_synth import (  # noqa: E402
     FILLER, Synthetic, Table, box, build_standard, coils, decl_only_payload, element, graphical_payload, guid,
@@ -599,13 +599,13 @@ class GraphDecode(Base):
 
     def test_text_and_json_labels(self):
         result = self.decode()
-        text = graph.render_graph_text(result)
+        text = graphview.render_graph_text(result)
         self.assertIn("NOT decoded: wiring", text)
         self.assertIn("not full coverage", text)
         self.assertIn("OUT/coil 'Lamp' type=BOOL mod=2 ~set", text)
         self.assertIn("IN 'Start' type=BOOL mod=1 ~negated", text)
         self.assertIn("comment='start the lamp'", text)
-        data = graph.graph_to_dict(result)
+        data = graphview.graph_to_dict(result)
         item = data["networks"][0]["items"][1]
         self.assertIn("ids", item["heuristic"])
         self.assertNotIn("ids", item["decoded"])
