@@ -19,7 +19,7 @@ flavour and which CODESYS SP is underneath.** Libraries, devices and some menus 
 
 | Format | What it is |
 |---|---|
-| `.project` / `.library` | a single compressed file; binary as far as Git is concerned |
+| `.project` / `.library` | a single compressed file; binary as far as Git is concerned. A `.project` can be read without the IDE by `scripts/codesys_project.py`: [codesys-project-files.md](codesys-project-files.md) (undocumented format, reverse-engineered) |
 | `.compiled-library-v3` | an encrypted library with no source |
 | `*.export` | native XML, "fully compatible" with the project format |
 | `*.xml` PLCopenXML | namespace `tc6_0200`; methods, properties and folders live in `addData` (see the `exchange-formats` skill); "100% compatibility cannot be guaranteed" |

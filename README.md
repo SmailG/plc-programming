@@ -45,7 +45,7 @@ git clone https://github.com/SmailG/plc-programming.git .agents/plugins/plc-prog
 | `schneider` skill | automatic | Machine Expert (M241/M251/M262), Control Expert (M340/M580), Automation Expert, Modbus, EtherNet/IP, OPC UA |
 | `iec-61131-3` skill | automatic | Ed.2–Ed.4, the five languages, POUs, OOP, data types, the standard library, PLCopen guidelines, Motion and Safety |
 | `exchange-formats` skill | automatic | PLCopen XML (TC6 v2.0/v2.01), IEC 61131-10, AutomationML (IEC 62714), DEXPI / ISO 15926 |
-| `other-platforms` skill | automatic | Beckhoff TwinCAT, CODESYS, ABB Freelance (PRT/CSV) / AC500 / 800xA, Rockwell L5X/L5K |
+| `other-platforms` skill | automatic | Beckhoff TwinCAT, CODESYS (incl. reading a binary `.project` offline), ABB Freelance (PRT/CSV) / AC500 / 800xA, Rockwell L5X/L5K |
 | `iec-61499` skill | automatic | event-driven FBs, ECC, 4diac file formats |
 | `packml-isa88-opcua` skill | automatic | PackML states and PackTags, ISA-88 / IEC 61512, OPC UA (OPC 30000/30001/30050) |
 | `/plc-programming:new-pou` | user only | scaffold a POU for a chosen platform and format |
@@ -78,6 +78,23 @@ The official XSDs (PLCopen TC6, IEC 61131-10) are **not bundled** because their 
 do not clearly permit redistribution. Download them from
 <https://www.plcopen.org/downloads/> and pass `--xsd`.
 
+## The CODESYS `.project` reader
+
+```bash
+python3 scripts/codesys_project.py list project.project
+python3 scripts/codesys_project.py st project.project <name|guid>
+python3 scripts/codesys_project.py dump-st project.project out/
+python3 scripts/codesys_project.py graph project.project <name|guid> [--json]
+```
+
+Reads a CODESYS 3.5 / EcoStruxure Machine Expert `.project` without the IDE (standard
+library only, Python 3.9+). **The format is undocumented**: the reader is reverse-engineered
+and was checked on Machine Expert V2.x files only. ST text and the object inventory are
+decoded; graphical (LD/FBD) records are listed with every interpretation marked as a
+heuristic, and the wiring is not decoded. Prefer a PLCopen XML export from the IDE when you
+can get one, and verify graphical logic in the IDE. Details:
+[codesys-project-files.md](skills/other-platforms/references/codesys-project-files.md).
+
 ## Tests and evals
 
 ```bash
@@ -86,7 +103,8 @@ claude plugin eval . --trust-plugin --allow-tools Write Edit "Bash(python3 *)" -
 ```
 
 - **Unit tests:** every validator rule is exercised by an input it must catch and by a
-  valid control it must pass. Every shipped template and every `iecst` code block in the
+  valid control it must pass. The `.project` reader is tested on synthetic projects built in
+  the test, never on a real program. Every shipped template and every `iecst` code block in the
   skills must lint clean.
 - **Evals:** they compare the plugin against a no-plugin baseline on edition facts, SFC
   semantics, a classic scan-cycle bug, PLCopen XML generation, SimaticML namespaces,
