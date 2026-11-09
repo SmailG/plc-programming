@@ -17,6 +17,7 @@ from .binary import FormatError
 # The largest entry the reader touches in the projects it was checked on is under 3 MB; the cap
 # leaves wide headroom and stops a small zip that inflates to gigabytes (a zip bomb).
 ENTRY_CAP = 256 * 1024 * 1024
+TOTAL_CAP = 1024 * 1024 * 1024  # across every entry one load reads: many entries just under ENTRY_CAP
 _READ_ERRORS = (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError,
                 OverflowError, OSError)
 

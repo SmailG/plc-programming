@@ -119,6 +119,14 @@ class Project(unittest.TestCase):
         self.assertEqual(code, codesys_project.EXIT_FATAL)
         self.assertIn("inflates past 100 bytes", err)
 
+    def test_objects_past_the_total_cap_are_fatal(self):
+        with mock.patch.object(zipread, "TOTAL_CAP", 50):  # each object is 43 bytes: the second crosses it
+            code, _, err = run_cli("list", self.path)
+        self.assertEqual(code, codesys_project.EXIT_FATAL)
+        self.assertIn("inflate past 50 bytes in total", err)
+        with mock.patch.object(zipread, "TOTAL_CAP", 86):  # exactly both objects: still read
+            self.assertEqual(run_cli("list", self.path)[0], 0)
+
     def test_the_cap_reads_an_entry_of_exactly_the_cap(self):
         with zipfile.ZipFile(self.path) as z:
             info = z.getinfo(self.good + ".object")
@@ -383,6 +391,19 @@ class XrefNames(unittest.TestCase):
         struct = "TYPE T EXTENDS U :\nSTRUCT\n\tf : INT;\nEND_STRUCT\nEND_TYPE"
         self.assertEqual([h[:2] for h in _hits(struct, query="U", kind=project.KIND_DUT)], [("declaration:1", "type")])
         self.assertEqual([h[:2] for h in _hits(struct, query="f", kind=project.KIND_DUT)], [("declaration:3", "declared")])
+
+    def test_an_inheritance_clause_on_its_own_line_is_types_not_a_declaration(self):
+        for keyword in ("EXTENDS", "IMPLEMENTS"):
+            decl = "FUNCTION_BLOCK P\n\t%s Base\nVAR\n\tx : INT;\nEND_VAR" % keyword
+            self.assertEqual([h[:2] for h in _hits(decl, impl="", query="x")], [("declaration:4", "declared")], keyword)
+            self.assertEqual([h[:2] for h in _hits(decl, impl="", query="Base")], [("declaration:2", "type")], keyword)
+            self.assertEqual(_hits(decl, impl="", query=keyword), [], keyword)
+
+    def test_a_pragma_line_before_the_header_leaves_the_header_intact(self):
+        decl = "{attribute 'qualified_only'}\nFUNCTION Func : BOOL\nVAR_INPUT\n\tx : INT;\nEND_VAR"
+        self.assertEqual([h[:2] for h in _hits(decl, impl="", query="Func")], [("declaration:2", "declared")])
+        self.assertEqual([h[:2] for h in _hits(decl, impl="", query="BOOL")], [("declaration:2", "type")])
+        self.assertEqual([h[:2] for h in _hits(decl, impl="", query="x")], [("declaration:4", "declared")])
 
     def test_an_initializer_is_read_and_the_type_is_a_type(self):
         decl = "VAR\n\tv : Lim := Lim;\nEND_VAR"

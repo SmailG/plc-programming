@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from .binary import FormatError, parse_string_table, read_varint
+from . import zipread
 from .zipread import entry_name, open_archive, read_entry
 
 STRING_TABLE_NAME = "__shared_data_storage_string_table__.auxiliary"
@@ -244,6 +245,7 @@ def load_project(path: str) -> Project:
         strings = parse_string_table(read_entry(archive, table_info))
         objects: Dict[str, ObjectRecord] = {}
         blobs: Dict[str, bytes] = {}
+        total = 0
         for guid, parts in entries.items():
             rec = ObjectRecord(guid=guid, has_meta="meta" in parts, has_object="object" in parts)
             objects[guid] = rec
@@ -257,10 +259,13 @@ def load_project(path: str) -> Project:
             if rec.has_object:
                 try:
                     blobs[guid] = read_entry(archive, parts["object"])
+                    total += len(blobs[guid])
                 except FormatError as exc:
                     rec.kind = KIND_UNREADABLE
                     rec.problems.append("object: %s" % exc)
                 else:
+                    if total > zipread.TOTAL_CAP:
+                        raise FormatError("%s: objects inflate past %d bytes in total; not read" % (path, zipread.TOTAL_CAP))
                     classify_object(rec, blobs[guid], strings)
             else:
                 rec.problems.append("no .object entry")

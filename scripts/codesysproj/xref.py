@@ -40,7 +40,8 @@ _HEADER_RE = re.compile(
     r"\s*(?:FUNCTION_BLOCK|FUNCTION|METHOD|PROPERTY|PROGRAM|INTERFACE|TYPE|ACTION|TRANSITION)\b[ \t]*([^\W\d]\w*)?",
     re.I)
 _STRUCT_RE = re.compile(r"\bSTRUCT\b", re.I)
-_INHERIT_RE = re.compile(r"[ \t]+(?:EXTENDS|IMPLEMENTS)\b[^\n:]*", re.I)  # `FUNCTION_BLOCK F EXTENDS B IMPLEMENTS I`
+# `FUNCTION_BLOCK F EXTENDS B IMPLEMENTS I`, each clause on the header line or on a line of its own
+_INHERIT_RE = re.compile(r"(?:\s+(?:EXTENDS|IMPLEMENTS)\b[^\n:]*)+", re.I)
 _INHERIT_WORD_RE = re.compile(r"\b(?:EXTENDS|IMPLEMENTS)\b", re.I)
 SEARCHED_KINDS = (KIND_ST, KIND_GRAPHICAL, KIND_GVL, KIND_DUT)
 
@@ -162,7 +163,7 @@ class _Declaration:
             clause = _INHERIT_WORD_RE.sub(lambda m: " " * len(m.group()), chunk[head_end:inherit.end()])
             self.paths(clause, offset + head_end, lambda path: "type")
             head_end = inherit.end()
-        first_line_end = chunk.find("\n")
+        first_line_end = chunk.find("\n", len(chunk) - len(chunk.lstrip()))  # a pragma line may precede the header
         colon = chunk.find(":")
         if colon == -1 or chunk[head_end:colon].strip():
             return head_end
