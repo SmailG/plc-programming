@@ -49,8 +49,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/codesys_project.py xref PROJECT NAME [--js
 | Command | Output |
 |---|---|
 | `list` | every object: guid, kind, subtype, name, ancestor names. `--kind` is one of `st`, `graphical`, `gvl`, `dut`, `other`, `unreadable` |
-| `st` | declaration and implementation text of an ST POU. For a graphical POU: the declaration only. `--decl` / `--impl` print one part raw |
-| `dump-st` | every ST object as `<Device>_<Name>.decl.st` and `.impl.st`. Text is written byte for byte (CRLF kept) |
+| `st` | declaration and implementation text of an ST POU. For a graphical POU, a GVL or a DUT: the declaration only. `--decl` / `--impl` print one part raw |
+| `dump-st` | every ST POU as `<Device>_<Name>.decl.st` and `.impl.st`, and every GVL and DUT as `.decl.st`. Text is written byte for byte (CRLF kept) |
 | `graph` | the element records and network comments of an LD/FBD POU, as text or `--json` |
 | `info` | per device application: CodeId and DataId (the build identity), and the project's last save time. See [Which saved project matches a running PLC](#which-saved-project-matches-a-running-plc) |
 | `diff` | with a POU name or guid: the unified diff of its declaration and implementation (ST) or of its decoded graph (LD/FBD) between two project files. Without one: the objects added, removed and changed. See [Comparing two versions](#comparing-two-versions) |
@@ -59,6 +59,8 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/codesys_project.py xref PROJECT NAME [--js
 - **Names are not unique.** Two devices can each have an `Application`, and a POU can
   exist once per device. `st` and `graph` refuse an ambiguous name (exit 2) and list the
   candidates with their ancestors; give the guid, or the first 8 or more characters of it.
+  Names and guids match in any case. `diff OLD NEW <name>` takes a renamed POU's old or new
+  name: it is resolved where it exists and found in the other version by guid.
 - **`dump-st` file names** start with the root-most ancestor (the device), which is a
   heuristic. Names that collide, including by case, all get `_<first 8 of the guid>`, so no
   file is overwritten. Names come from the file and are made safe as one path component.
@@ -67,6 +69,9 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/codesys_project.py xref PROJECT NAME [--js
   unreadable file, unknown or ambiguous name, or the object has the wrong kind for the command.
   `diff` exits 0 when the two projects differ: a difference is its result, not a problem.
 - A damaged object is reported and skipped; it does not stop the other objects from being read.
+  A zip entry that fails its CRC, does not inflate, is encrypted, or inflates past 256 MiB is
+  that object's problem; the same failure on the string table makes the file unreadable (exit 2).
+  `info` refuses an XML entry that declares a DOCTYPE or an ENTITY, whatever its encoding.
 
 ## What is decoded
 
@@ -99,7 +104,7 @@ tags is **not decoded**).
 | box | type, instance name, header id | nesting depth (a box spans from its header id H to the next 8-byte id H+1) |
 | coils | count byte | |
 | pins | pin names | |
-| empty | raw bytes, id | what an empty slot means |
+| empty | raw bytes, id | what an empty slot means. An empty name is string-table index 39 (`""` in every project examined; **observed**, the reader does not look it up) |
 | parallel_marker | value byte | what it means (**unverified**) |
 | unknown | the reason and 16 raw bytes | a record that was recognised but could not be read (a name index not in the string table, a record that runs past the end) |
 
@@ -200,10 +205,11 @@ the vendor does not document the comparison).
 
 **There is no compile time in the project.** `info` prints the last **save** time, which can
 be earlier or later than the build that runs. The compile time is written by the IDE next to the
-project file (`.compileinfo` and `.bootinfo` files, which are not part of the zip and are not
-decoded here), and by the IDE's build messages. When the identity cannot be read off the
+project file (**unverified**: `.compileinfo` and `.bootinfo` files beside the project were seen,
+and are not part of the zip and not decoded here), and by the IDE's build messages. When the identity cannot be read off the
 controller, match the build to **logged data** instead: find when a logged signal's behaviour
-changed, take the compile time of each candidate (file time of its `.compileinfo`), and use
+changed, take the compile time of each candidate (**unverified**: that the `.compileinfo` file's
+modification time is the compile time was not checked; this reader does not read the file), and use
 `diff` between consecutive candidates to see which POU changes could explain the change. Name the
 evidence tier: a timestamp match is a coincidence candidate until a CodeId confirms it.
 

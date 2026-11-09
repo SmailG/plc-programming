@@ -8,7 +8,8 @@ description: >-
   Automation Builder (AC500) and 800xA Control Builder M, and Rockwell Studio 5000 Logix
   Designer (L5X/L5K, RLL neutral text XIC/XIO/OTE/TON, v36 IEC mnemonic renames, AOIs,
   FBD_TIMER in ST). Also reading a CODESYS/Machine Expert binary `.project` without the IDE
-  (ST text, object inventory). Use when working with any of these tools or files. For
+  (ST text, object inventory, build identity with `info`, comparing two versions with `diff`,
+  where a name is used with `xref`). Use when working with any of these tools or files. For
   Siemens and Schneider use their dedicated skills.
 ---
 
@@ -48,9 +49,9 @@ checked on Machine Expert V2.x files only.
 
 - `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/codesys_project.py list <file.project>` inventories
   the objects; `st <file.project> <name|guid>` prints a POU's declaration and implementation;
-  `dump-st <file.project> <outdir>` writes every ST POU; `graph <file.project> <name|guid>`
+  `dump-st <file.project> <outdir>` writes every ST POU and GVL/DUT declaration; `graph <file.project> <name|guid>`
   lists the element records of an LD/FBD POU; `info <file.project>` prints each application's
-  CodeId / DataId and the last save time (which saved project matches a running PLC);
+  CodeId / DataId and the last save time (a lead to which saved project a PLC runs; the IDE decides);
   `diff <old> <new> [<name|guid>]` compares two versions; `xref <file.project> <name>` lists every
   use of a name (heuristic, by name only).
 - **Prefer a PLCopen XML export from the IDE when one can be had.** Use the reader for ST

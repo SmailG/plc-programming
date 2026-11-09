@@ -95,7 +95,7 @@ library only, Python 3.9+). **The format is undocumented**: the reader is revers
 and was checked on Machine Expert V2.x files only. ST text and the object inventory are
 decoded; graphical (LD/FBD) records are listed with every interpretation marked as a
 heuristic, and the wiring is not decoded. `info` prints each application's CodeId / DataId
-(which saved project matches the running controller) and the last save time; `diff` compares
+(a lead to which saved project the controller runs; the IDE's comparison decides) and the last save time; `diff` compares
 two versions of a POU or of the whole project with ids and offsets left out; `xref` lists every
 use of a name, by name only (heuristic). Prefer a PLCopen XML export from the IDE when you
 can get one, and verify graphical logic in the IDE. Details:
