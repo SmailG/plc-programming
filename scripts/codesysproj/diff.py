@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import difflib
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from .graph import decode_graph
 from .graphview import item_label
@@ -88,8 +88,8 @@ def sections(project: Project, rec: ObjectRecord, notes: Optional[List[str]] = N
     return parts
 
 
-def _unified(label: str, name: Optional[str], old: List[str], new: List[str]) -> List[str]:
-    return list(difflib.unified_diff(old, new, "OLD %s %s" % (name, label), "NEW %s %s" % (name, label),
+def _unified(label: str, old_name: Optional[str], new_name: Optional[str], old: List[str], new: List[str]) -> List[str]:
+    return list(difflib.unified_diff(old, new, "OLD %s %s" % (old_name, label), "NEW %s %s" % (new_name, label),
                                      lineterm="", n=CONTEXT_LINES))
 
 
@@ -103,7 +103,7 @@ def object_diff(old_project: Project, old: ObjectRecord, new_project: Project, n
     old_parts = sections(old_project, old, result.notes)
     new_parts = sections(new_project, new, result.notes)
     for label in differing_labels(old_parts, new_parts):
-        result.sections.append(SectionDiff(label, _unified(label, new.name, old_parts.get(label, []),
+        result.sections.append(SectionDiff(label, _unified(label, old.name, new.name, old_parts.get(label, []),
                                                            new_parts.get(label, []))))
     return result
 

@@ -19,18 +19,17 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
-import zipfile
+import xml.parsers.expat
 from dataclasses import dataclass, field
 from typing import List, Optional
 
 from .binary import FormatError
-from .project import _entry_name
+from .zipread import entry_name, open_archive, read_entry
 
 DEVICES_ENTRY = "devicesmetainformation.auxiliary"
 HISTORY_ENTRY = "engineeringtoolsversions.auxiliary"
 _STAMP_RE = re.compile(r"^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)$")
 _GUID_HEAD_RE = re.compile(r"^([0-9a-fA-F]{8})-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-_DOCTYPE_RE = re.compile(rb"<!\s*(DOCTYPE|ENTITY)", re.I)
 
 
 @dataclass
@@ -75,8 +74,9 @@ def swapped_id(guid: Optional[str]) -> Optional[str]:
 
 
 def _parse_xml(data: bytes, entry: str, notes: List[str]) -> Optional[ET.Element]:
-    """The XML root, or None with a note. DOCTYPE and ENTITY declarations are refused, not expanded."""
-    if _DOCTYPE_RE.search(data):
+    """The XML root, or None with a note. DOCTYPE and ENTITY declarations are refused, not expanded,
+    whatever the document's encoding: expat reports them before ElementTree sees any entity."""
+    if _has_doctype(data):
         notes.append("%s: has a DOCTYPE or ENTITY declaration; not parsed" % entry)
         return None
     try:
@@ -84,6 +84,25 @@ def _parse_xml(data: bytes, entry: str, notes: List[str]) -> Optional[ET.Element
     except ET.ParseError as exc:
         notes.append("%s: not well-formed XML (%s)" % (entry, exc))
         return None
+
+
+class _Doctype(Exception):
+    pass
+
+
+def _has_doctype(data: bytes) -> bool:
+    def refuse(*_args) -> None:
+        raise _Doctype()
+    parser = xml.parsers.expat.ParserCreate()
+    parser.StartDoctypeDeclHandler = refuse
+    parser.EntityDeclHandler = refuse
+    try:
+        parser.Parse(data, True)
+    except _Doctype:
+        return True
+    except xml.parsers.expat.ExpatError:
+        return False  # not well-formed: ElementTree reports it
+    return False
 
 
 def _data_values(node: ET.Element) -> dict:
@@ -116,26 +135,34 @@ def _newest_save(root: ET.Element, info: ProjectInfo) -> None:
         info.last_saved = "%s-%s-%s %s:%s:%s" % g
         info.core_version = entry.get("CoreVersion")
         counter = entry.get("SaveCounter", "")
-        info.save_counter = int(counter) if counter.isdigit() else None
+        info.save_counter = int(counter) if counter.isascii() and counter.isdigit() else None
+
+
+def _read_xml(archive, zinfo, entry: str, notes: List[str]) -> Optional[ET.Element]:
+    try:
+        data = read_entry(archive, zinfo)
+    except FormatError as exc:
+        notes.append("%s: %s" % (entry, exc))
+        return None
+    return _parse_xml(data, entry, notes)
 
 
 def read_info(path: str) -> ProjectInfo:
     """Read the build identity. A missing or unreadable entry is a note; a non-zip raises FormatError."""
-    try:
-        archive = zipfile.ZipFile(path)
-    except (zipfile.BadZipFile, OSError) as exc:
-        raise FormatError("%s: not a readable zip archive (%s)" % (path, exc))
+    archive = open_archive(path)
     info = ProjectInfo()
     with archive:
-        entries = {_entry_name(i): i for i in archive.infolist()}
+        entries = {entry_name(i): i for i in archive.infolist()}
         if DEVICES_ENTRY not in entries:
             info.notes.append("no %s entry: no build identity in this project" % DEVICES_ENTRY)
         else:
-            root = _parse_xml(archive.read(entries[DEVICES_ENTRY]), DEVICES_ENTRY, info.notes)
+            root = _read_xml(archive, entries[DEVICES_ENTRY], DEVICES_ENTRY, info.notes)
             if root is not None:
                 info.devices = _devices(root)
+                if not info.devices:
+                    info.notes.append("%s: no <Device> element under <%s>" % (DEVICES_ENTRY, root.tag))
         if HISTORY_ENTRY in entries:
-            root = _parse_xml(archive.read(entries[HISTORY_ENTRY]), HISTORY_ENTRY, info.notes)
+            root = _read_xml(archive, entries[HISTORY_ENTRY], HISTORY_ENTRY, info.notes)
             if root is not None:
                 _newest_save(root, info)
     return info

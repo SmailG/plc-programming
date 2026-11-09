@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from .binary import FormatError, parse_string_table, read_varint
+from .zipread import entry_name, open_archive, read_entry
 
 STRING_TABLE_NAME = "__shared_data_storage_string_table__.auxiliary"
 OBJECT_MAGIC = bytes.fromhex("02200928")
@@ -40,7 +41,7 @@ PLC_LOGIC_NAME = "plc logic"
 
 GUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _DECL_START_RE = re.compile(
-    r"\s*(?:(?://[^\n]*\n|\(\*.*?\*\)|\{[^}]*\})\s*)*"
+    r"\s*(?:(?://[^\n]*\n|\(\*(?:(?!\*\)).)*\*\)|\{[^}]*\})\s*)*"
     r"(PROGRAM|FUNCTION_BLOCK|FUNCTION|METHOD|PROPERTY|ACTION|INTERFACE|TRANSITION|TYPE"
     r"|VAR_GLOBAL|VAR_CONFIG|VAR)\b",
     re.S,
@@ -101,16 +102,6 @@ class Project:
     def records(self) -> List[ObjectRecord]:
         """Objects in tree order (by ancestor names, then name, then guid)."""
         return sorted(self.objects.values(), key=lambda r: (r.path, r.name or "", r.guid))
-
-
-def _entry_name(info: zipfile.ZipInfo) -> str:
-    """Entry name as text: the zip flag says UTF-8, otherwise cp437, with a GBK retry."""
-    raw = info.filename.encode("utf-8") if info.flag_bits & 0x800 else info.filename.encode("cp437")
-    try:
-        name = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        name = raw.decode("gbk", "replace")
-    return name.replace("\\", "/").rsplit("/", 1)[-1]
 
 
 def _scan_varints(data: bytes, start: int = 0) -> List[int]:
@@ -236,15 +227,12 @@ def _link_parents(objects: Dict[str, ObjectRecord]) -> None:
 def load_project(path: str) -> Project:
     """Read every object of the `.project`. Per-object problems go to `ObjectRecord.problems`;
     a file that is not a project at all raises FormatError."""
-    try:
-        archive = zipfile.ZipFile(path)
-    except (zipfile.BadZipFile, OSError) as exc:
-        raise FormatError("%s: not a readable zip archive (%s)" % (path, exc))
+    archive = open_archive(path)
     with archive:
         entries: Dict[str, Dict[str, zipfile.ZipInfo]] = {}
         table_info = None
         for info in archive.infolist():
-            name = _entry_name(info)
+            name = entry_name(info)
             if name == STRING_TABLE_NAME:
                 table_info = info
                 continue
@@ -253,7 +241,7 @@ def load_project(path: str) -> Project:
                 entries.setdefault(stem, {})[ext] = info
         if table_info is None:
             raise FormatError("%s: no %s entry; not a CODESYS 3.5 project" % (path, STRING_TABLE_NAME))
-        strings = parse_string_table(archive.read(table_info))
+        strings = parse_string_table(read_entry(archive, table_info))
         objects: Dict[str, ObjectRecord] = {}
         blobs: Dict[str, bytes] = {}
         for guid, parts in entries.items():
@@ -261,14 +249,19 @@ def load_project(path: str) -> Project:
             objects[guid] = rec
             if rec.has_meta:
                 try:
-                    rec.parent_guid, rec.name = parse_meta(archive.read(parts["meta"]), guid, strings)
+                    rec.parent_guid, rec.name = parse_meta(read_entry(archive, parts["meta"]), guid, strings)
                 except FormatError as exc:
                     rec.problems.append("meta: %s" % exc)
             else:
                 rec.problems.append("no .meta entry: name and parent unknown")
             if rec.has_object:
-                blobs[guid] = archive.read(parts["object"])
-                classify_object(rec, blobs[guid], strings)
+                try:
+                    blobs[guid] = read_entry(archive, parts["object"])
+                except FormatError as exc:
+                    rec.kind = KIND_UNREADABLE
+                    rec.problems.append("object: %s" % exc)
+                else:
+                    classify_object(rec, blobs[guid], strings)
             else:
                 rec.problems.append("no .object entry")
     _link_parents(objects)
@@ -276,7 +269,7 @@ def load_project(path: str) -> Project:
 
 
 def find_objects(project: Project, query: str) -> List[ObjectRecord]:
-    """Objects matching a full guid, a unique guid prefix (8+ chars), or an exact name."""
+    """Objects matching a full guid, a unique guid prefix (8+ chars), or a name (IEC names ignore case)."""
     exact = project.objects.get(query.lower())
     if exact is not None:
         return [exact]
@@ -284,4 +277,4 @@ def find_objects(project: Project, query: str) -> List[ObjectRecord]:
         prefix = [r for g, r in project.objects.items() if g.startswith(query.lower())]
         if prefix:
             return sorted(prefix, key=lambda r: r.guid)
-    return [r for r in project.records() if r.name == query]
+    return [r for r in project.records() if (r.name or "").lower() == query.lower()]

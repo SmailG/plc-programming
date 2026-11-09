@@ -32,7 +32,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -42,7 +42,7 @@ from codesysproj.export import dump_st  # noqa: E402
 from codesysproj.graph import decode_graph  # noqa: E402
 from codesysproj.graphview import graph_to_dict, render_graph_text  # noqa: E402
 from codesysproj.project import (  # noqa: E402
-    KIND_GRAPHICAL, KIND_ST, KINDS, ObjectRecord, Project, find_objects, load_project,
+    KIND_DUT, KIND_GRAPHICAL, KIND_GVL, KIND_ST, KINDS, ObjectRecord, Project, find_objects, load_project,
 )
 
 EXIT_OK, EXIT_PROBLEMS, EXIT_FATAL = 0, 1, 2
@@ -77,12 +77,13 @@ def resolve_one(project: Project, query: str) -> ObjectRecord:
     return matches[0]
 
 
-def report_problems(records: List[ObjectRecord]) -> int:
+def report_problems(records: List[ObjectRecord], label: str = "") -> int:
     """Print each object's problems to stderr; return how many objects had any."""
     bad = [r for r in records if r.problems]
+    prefix = "PROBLEM %s" % label if label else "PROBLEM"
     for rec in bad:
         for problem in rec.problems:
-            print("PROBLEM %s (%s): %s" % (rec.guid, rec.name or "?", problem), file=sys.stderr)
+            print("%s %s (%s): %s" % (prefix, rec.guid, rec.name or "?", problem), file=sys.stderr)
     return len(bad)
 
 
@@ -97,13 +98,15 @@ def cmd_list(project: Project, args: argparse.Namespace) -> int:
 
 def cmd_st(project: Project, args: argparse.Namespace) -> int:
     rec = resolve_one(project, args.target)
-    if rec.kind not in (KIND_ST, KIND_GRAPHICAL) or rec.declaration is None:
+    if rec.kind not in (KIND_ST, KIND_GRAPHICAL, KIND_GVL, KIND_DUT) or rec.declaration is None:
         raise FormatError("%s (%s) is kind %r: there is no ST text to print" % (rec.guid, rec.name, rec.kind))
     if args.decl:
         sys.stdout.write(rec.declaration)
     elif args.impl:
         if rec.kind == KIND_GRAPHICAL:
             raise FormatError("%s (%s) is graphical: its implementation is not ST; use `graph`" % (rec.guid, rec.name))
+        if rec.kind != KIND_ST:
+            raise FormatError("%s (%s) is a %s: it has a declaration only" % (rec.guid, rec.name, rec.kind))
         sys.stdout.write(rec.implementation or "")
     else:
         print("(* declaration: %s %s *)" % (rec.name, rec.guid))
@@ -111,7 +114,7 @@ def cmd_st(project: Project, args: argparse.Namespace) -> int:
         if rec.kind == KIND_ST:
             print("(* implementation *)")
             print(rec.implementation or "")
-        else:
+        elif rec.kind == KIND_GRAPHICAL:
             print("(* implementation: graphical (%s), not ST; use `graph` *)" % rec.language)
     return EXIT_PROBLEMS if report_problems([rec]) else EXIT_OK
 
@@ -120,7 +123,7 @@ def cmd_dump_st(project: Project, args: argparse.Namespace) -> int:
     written = dump_st(project, args.outdir)
     for rec, files in written:
         print("%s  %s" % (rec.guid, "  ".join(files)))
-    print("wrote %d ST object(s) to %s" % (len(written), args.outdir))
+    print("wrote %d object(s) to %s" % (len(written), args.outdir))
     return EXIT_PROBLEMS if report_problems([r for r, _ in written]) else EXIT_OK
 
 
@@ -142,14 +145,22 @@ def cmd_info(args: argparse.Namespace) -> int:
     return EXIT_PROBLEMS if info.notes else EXIT_OK
 
 
-def resolve_in(project: Project, query: str, label: str) -> ObjectRecord:
-    """The one object `query` names in this version of the project; the error names the version."""
-    if not find_objects(project, query):
-        raise FormatError("%r not found in %s (%s)" % (query, label, project.path))
-    rec = resolve_one(project, query)
-    if rec.kind not in diff.COMPARABLE_KINDS:
-        raise FormatError("%s (%s) is kind %r in %s: there is nothing to compare" % (rec.guid, rec.name, rec.kind, label))
-    return rec
+def resolve_pair(old: Project, new: Project, query: str) -> Tuple[ObjectRecord, ObjectRecord]:
+    """The object `query` names, in both versions. The name may be the old or the new one (a rename):
+    it is resolved where it exists and the counterpart is found by guid."""
+    found = [(label, p) for label, p in (("NEW", new), ("OLD", old)) if find_objects(p, query)]
+    if not found:
+        raise FormatError("%r not found in OLD (%s) or NEW (%s)" % (query, old.path, new.path))
+    rec = resolve_one(found[0][1], query)
+    other_label, other = ("OLD", old) if found[0][0] == "NEW" else ("NEW", new)
+    if rec.guid not in other.objects:
+        raise FormatError("%s (%s) is not in %s (%s): it was %s"
+                          % (rec.guid, rec.name, other_label, other.path, "added" if other is old else "removed"))
+    pair = (other.objects[rec.guid], rec) if other is old else (rec, other.objects[rec.guid])
+    for label, r in zip(("OLD", "NEW"), pair):
+        if r.kind not in diff.COMPARABLE_KINDS:
+            raise FormatError("%s (%s) is kind %r in %s: there is nothing to compare" % (r.guid, r.name, r.kind, label))
+    return pair
 
 
 def report_notes(notes: List[str]) -> int:
@@ -164,13 +175,14 @@ def cmd_diff(args: argparse.Namespace) -> int:
         result = diff.project_diff(old, new)
         print(json.dumps(diff.project_diff_to_dict(result), indent=2, ensure_ascii=False) if args.json
               else diff.render_project_diff(result))
-        problems = report_problems(old.records()) + report_problems(new.records())
-        return EXIT_PROBLEMS if problems or report_notes(result.notes) else EXIT_OK
-    a, b = resolve_in(old, args.target, "OLD"), resolve_in(new, args.target, "NEW")
+        problems = report_problems(old.records(), "OLD") + report_problems(new.records(), "NEW")
+        return EXIT_PROBLEMS if report_notes(result.notes) or problems else EXIT_OK
+    a, b = resolve_pair(old, new, args.target)
     result = diff.object_diff(old, a, new, b)
     print(json.dumps(diff.object_diff_to_dict(result), indent=2, ensure_ascii=False) if args.json
           else diff.render_object_diff(result))
-    return EXIT_PROBLEMS if report_problems([a, b]) or report_notes(result.notes) else EXIT_OK
+    problems = report_problems([a], "OLD") + report_problems([b], "NEW")
+    return EXIT_PROBLEMS if report_notes(result.notes) or problems else EXIT_OK
 
 
 def cmd_xref(project: Project, args: argparse.Namespace) -> int:
@@ -187,13 +199,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("project")
     p_list.add_argument("--json", action="store_true")
     p_list.add_argument("--kind", choices=KINDS, help="only objects of this (heuristic) kind")
-    p_st = sub.add_parser("st", help="print a POU's declaration and implementation text")
+    p_st = sub.add_parser("st", help="print a POU's declaration and implementation text (a GVL or DUT: its declaration)")
     p_st.add_argument("project")
     p_st.add_argument("target", help="object name, guid or unique guid prefix (8+ characters)")
     part = p_st.add_mutually_exclusive_group()
     part.add_argument("--decl", action="store_true", help="print only the declaration, raw")
     part.add_argument("--impl", action="store_true", help="print only the implementation, raw")
-    p_dump = sub.add_parser("dump-st", help="write every ST POU as <Device>_<Name>.decl.st / .impl.st")
+    p_dump = sub.add_parser("dump-st", help="write every ST POU as <Device>_<Name>.decl.st / .impl.st, GVLs and DUTs as .decl.st")
     p_dump.add_argument("project")
     p_dump.add_argument("outdir")
     p_graph = sub.add_parser("graph", help="element records and network comments of an LD/FBD POU")
@@ -221,6 +233,9 @@ STANDALONE = {"info": cmd_info, "diff": cmd_diff}  # load their own project(s)
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    for stream in (sys.stdout, sys.stderr):  # a Windows console code page must not crash on a comment's č or đ
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
     try:
         if args.command in STANDALONE:
             return STANDALONE[args.command](args)

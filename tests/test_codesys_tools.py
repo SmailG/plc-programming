@@ -322,9 +322,8 @@ class ObjectDiff(Versions):
         for pou in ("Gone", "Fresh"):
             code, _, err = self.diff(pou)
             self.assertEqual(code, codesys_project.EXIT_FATAL)
-            self.assertIn("not found in", err)
-        self.assertIn("NEW", self.diff("Gone")[2])
-        self.assertIn("OLD", self.diff("Fresh")[2])
+        self.assertIn("is not in NEW", self.diff("Gone")[2])
+        self.assertIn("is not in OLD", self.diff("Fresh")[2])
 
     def test_a_guid_names_the_object_in_both_versions(self):
         code, out, _ = run_cli("diff", self.old, self.new, self.ids["edited"])

@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import List
 
-IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+IDENT_RE = re.compile(r"[^\W\d]\w*")  # a letter or `_`, then letters, digits, `_` (any script)
 _LITERAL_TAIL_RE = re.compile(r"[A-Za-z0-9_#.]*")
 _ADDRESS_RE = re.compile(r"%[A-Za-z0-9_.]*")
 
@@ -91,7 +91,7 @@ def scan_paths(code: str, base: int = 0, in_index: bool = False) -> List[NameRef
             i = _skip_number(code, i)
         elif c == "%":
             i = _ADDRESS_RE.match(code, i).end()
-        elif c.isalpha() or c == "_":
+        elif IDENT_RE.match(c):
             i = _scan_one_path(code, i, base, in_index, paths)
         else:
             i += 1
@@ -126,7 +126,7 @@ def _scan_one_path(code: str, i: int, base: int, in_index: bool, paths: List[Nam
         if code[i:i + 1] == "#":  # a typed literal such as REAL#1.0, not a variable
             return _LITERAL_TAIL_RE.match(code, i).end()
         follows = code[i + 1:i + 2]
-        if code[i:i + 1] == "." and (follows.isalpha() or follows == "_"):
+        if code[i:i + 1] == "." and IDENT_RE.match(follows):
             i += 1
             continue
         break

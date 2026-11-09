@@ -25,7 +25,7 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(HERE))
 
 import codesys_project  # noqa: E402
-from codesysproj import export, graph, graphview, project  # noqa: E402
+from codesysproj import export, graph, graphview, project, zipread  # noqa: E402
 from codesysproj.binary import FormatError, parse_string_table, read_varint  # noqa: E402
 from codesys_synth import (  # noqa: E402
     FILLER, Synthetic, Table, box, build_standard, coils, decl_only_payload, element, graphical_payload, guid,
@@ -86,15 +86,15 @@ class StringTable(unittest.TestCase):
 
 class EntryNames(unittest.TestCase):
     def test_plain_and_directory_prefix(self):
-        self.assertEqual(project._entry_name(zipfile.ZipInfo("a.meta")), "a.meta")
-        self.assertEqual(project._entry_name(zipfile.ZipInfo("dir\\x.meta")), "x.meta")
+        self.assertEqual(zipread.entry_name(zipfile.ZipInfo("a.meta")), "a.meta")
+        self.assertEqual(zipread.entry_name(zipfile.ZipInfo("dir\\x.meta")), "x.meta")
 
     def test_gbk_bytes_and_flagged_utf8(self):
         gbk = zipfile.ZipInfo(b"\xc4\xe3.meta".decode("cp437"))
-        self.assertEqual(project._entry_name(gbk), "你.meta")
+        self.assertEqual(zipread.entry_name(gbk), "你.meta")
         utf8 = zipfile.ZipInfo("é.meta")
         utf8.flag_bits |= 0x800
-        self.assertEqual(project._entry_name(utf8), "é.meta")
+        self.assertEqual(zipread.entry_name(utf8), "é.meta")
 
 
 class Meta(unittest.TestCase):
@@ -359,16 +359,17 @@ class FileNames(unittest.TestCase):
 
 
 class DumpSt(Base):
-    def test_only_st_objects_are_written_and_collisions_get_the_guid(self):
+    def test_st_pous_and_declarations_are_written_and_collisions_get_the_guid(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "out")
             written = export.dump_st(self.project, out)
             names = sorted(os.listdir(out))
-        self.assertEqual(len(written), 3)
+        self.assertEqual(len(written), 5)
         self.assertEqual(names, sorted([
             "DevA_Pragma.decl.st", "DevA_Pragma.impl.st",
-            "DevA_Main.decl.st", "DevA_Main.impl.st", "DevB_Main.decl.st", "DevB_Main.impl.st"]))
-        # Globals (gvl), Point (dut), Ladder (graphical) and Tasks (other) are not ST: none written
+            "DevA_Main.decl.st", "DevA_Main.impl.st", "DevB_Main.decl.st", "DevB_Main.impl.st",
+            "DevA_Globals.decl.st", "DevA_Point.decl.st"]))
+        # Globals (gvl) and Point (dut) have a declaration only; Ladder (graphical) and Tasks (other) are not written
 
     def test_text_is_byte_exact(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -686,8 +687,8 @@ class Cli(Base):
     def test_dump_st_command(self):
         with tempfile.TemporaryDirectory() as tmp:
             code, out, _ = self.run_cli("dump-st", self.path, tmp)
-            self.assertEqual((code, len(os.listdir(tmp))), (0, 6))
-        self.assertIn("wrote 3 ST object(s)", out)
+            self.assertEqual((code, len(os.listdir(tmp))), (0, 8))
+        self.assertIn("wrote 5 object(s)", out)
 
     def test_exit_codes_for_problems_and_unreadable_input(self):
         s = Synthetic()

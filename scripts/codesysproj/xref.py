@@ -37,9 +37,11 @@ _SECTION_WORDS = frozenset(w.lower() for w in (
     "VAR", "VAR_INPUT", "VAR_OUTPUT", "VAR_IN_OUT", "VAR_GLOBAL", "VAR_TEMP", "VAR_STAT", "VAR_EXTERNAL",
     "VAR_CONFIG", "VAR_INST", "CONSTANT", "RETAIN", "PERSISTENT", "END_VAR", "STRUCT", "END_STRUCT"))
 _HEADER_RE = re.compile(
-    r"\s*(?:FUNCTION_BLOCK|FUNCTION|METHOD|PROPERTY|PROGRAM|INTERFACE|TYPE|ACTION|TRANSITION)\b[ \t]*([A-Za-z_]\w*)?",
+    r"\s*(?:FUNCTION_BLOCK|FUNCTION|METHOD|PROPERTY|PROGRAM|INTERFACE|TYPE|ACTION|TRANSITION)\b[ \t]*([^\W\d]\w*)?",
     re.I)
 _STRUCT_RE = re.compile(r"\bSTRUCT\b", re.I)
+_INHERIT_RE = re.compile(r"[ \t]+(?:EXTENDS|IMPLEMENTS)\b[^\n:]*", re.I)  # `FUNCTION_BLOCK F EXTENDS B IMPLEMENTS I`
+_INHERIT_WORD_RE = re.compile(r"\b(?:EXTENDS|IMPLEMENTS)\b", re.I)
 SEARCHED_KINDS = (KIND_ST, KIND_GRAPHICAL, KIND_GVL, KIND_DUT)
 
 
@@ -108,13 +110,16 @@ def _scan_implementation(rec: ObjectRecord, query: List[str]) -> List[Reference]
     return refs
 
 
-def _declared_names(left: str) -> List[str]:
-    """Variable names in the text before a declaration's `:`: `VAR x, y AT %MX0.0` gives x, y."""
-    names = []
-    for part in (left.splitlines() or [""])[-1].split(","):
-        tokens = [t for t in part.split() if t.lower() not in _SECTION_WORDS]
-        if tokens:
-            names.append(tokens[0])
+def _declared_names(left: str) -> List[Tuple[str, int]]:
+    """Variable names, with their offsets, in the text before a declaration's `:`: `VAR x, y AT %MX0.0`
+    gives x and y; a name list may run over several lines."""
+    names, pos = [], 0
+    for part in left.split(","):
+        for token in re.finditer(r"\S+", part):
+            if token.group().lower() not in _SECTION_WORDS:
+                names.append((token.group(), pos + token.start()))
+                break
+        pos += len(part) + 1
     return names
 
 
@@ -151,10 +156,16 @@ class _Declaration:
             return 0
         if match.group(1):
             self.declared(match.group(1), offset + match.start(1))
+        head_end = match.end()
+        inherit = _INHERIT_RE.match(chunk, head_end)
+        if inherit is not None:  # the base and the interfaces are types
+            clause = _INHERIT_WORD_RE.sub(lambda m: " " * len(m.group()), chunk[head_end:inherit.end()])
+            self.paths(clause, offset + head_end, lambda path: "type")
+            head_end = inherit.end()
         first_line_end = chunk.find("\n")
         colon = chunk.find(":")
-        if colon == -1 or chunk[match.end():colon].strip():
-            return match.end()
+        if colon == -1 or chunk[head_end:colon].strip():
+            return head_end
         struct = _STRUCT_RE.search(chunk, colon)
         ends = [e for e in (first_line_end, struct.start() if struct else -1) if e != -1]
         end = min(ends) if ends else len(chunk)
@@ -165,8 +176,8 @@ class _Declaration:
         colon = chunk.find(":")
         if colon == -1:
             return
-        for name in _declared_names(chunk[:colon]):
-            self.declared(name, offset + colon)
+        for name, at in _declared_names(chunk[:colon]):
+            self.declared(name, offset + at)
         right_at = offset + colon + 1
         init = chunk.find(":=", colon)
         self.paths(chunk[colon + 1:], right_at,
@@ -195,7 +206,7 @@ def _scan_graph(project: Project, rec: ObjectRecord, query: List[str], result: X
     for number, net in enumerate(decoded.networks, 1):
         for item in net.items:
             for role, label, expression in _graph_names(item):
-                for path in scan_paths(expression):
+                for path in scan_paths(strip_noise(expression)):  # a quoted constant is not a name
                     if _contains(path.segments, query):
                         refs.append(Reference(rec.guid, rec.name, rec.kind, rec.path, "network %d" % number,
                                               "read" if path.in_index else role,
