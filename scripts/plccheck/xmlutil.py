@@ -5,6 +5,10 @@ External entities and DTDs are never fetched, and entity declarations are refuse
 entity declarations precede the root element, the format sniffer stops at the first one too:
 a file that declares an entity is not detected as any format, so the edit-time hook skips it,
 and validating it with an explicit format reports XML001.
+
+A namespace URI longer than MAX_NS_URI is refused as well: expat copies the URI into every element
+and namespaced attribute name under its declaration, so one long URI multiplies the memory by the
+element count (a 35 KB file reached 82 MB). The longest URI the checkers know is 77 characters.
 """
 
 from __future__ import annotations
@@ -68,7 +72,40 @@ class XmlError(Exception):
         self.line = line
 
 
+MAX_NS_URI = 256
+
+
+def _refuse_long_namespaces(data: bytes) -> None:
+    """Raise XmlError for a declaration of a namespace URI over MAX_NS_URI, before the real parse.
+
+    A parser without namespace processing keeps `xmlns` attributes as written and expands no URI
+    into names, so this pass costs about one more parse of the file. A handler for namespace
+    declarations in the real parser would be too late: the declaring element's own attributes are
+    already expanded by then. It still expands entities in attribute values, so it is where entity
+    declarations are refused: they precede the root element, so none is expanded before it raises,
+    and the real parse never sees one. What it cannot parse is left for the real parse to report.
+    """
+    parser = xml.parsers.expat.ParserCreate()
+
+    def start(_name, attrs):
+        for name, value in attrs.items():
+            if (name == "xmlns" or name.startswith("xmlns:")) and len(value) > MAX_NS_URI:
+                raise XmlError(f"namespace URI longer than {MAX_NS_URI} characters", parser.CurrentLineNumber)
+
+    def entity_decl(*_args):
+        # Expanding entities makes the work grow with the nesting, not the file size.
+        raise XmlError("XML entity declarations are not supported", parser.CurrentLineNumber)
+
+    parser.StartElementHandler = start
+    parser.EntityDeclHandler = entity_decl
+    try:
+        parser.Parse(data, True)
+    except xml.parsers.expat.ExpatError:
+        pass
+
+
 def parse_bytes(data: bytes) -> Node:
+    _refuse_long_namespaces(data)
     parser = xml.parsers.expat.ParserCreate(namespace_separator="}")
     parser.SetParamEntityParsing(xml.parsers.expat.XML_PARAM_ENTITY_PARSING_NEVER)
     root: list[Node] = []
@@ -101,14 +138,9 @@ def parse_bytes(data: bytes) -> Node:
                 stack[-1].text_line = parser.CurrentLineNumber
             chunks[-1].append(data)
 
-    def entity_decl(*_args):
-        # Expanding entities makes the work grow with the nesting, not the file size.
-        raise XmlError("XML entity declarations are not supported", parser.CurrentLineNumber)
-
     parser.StartElementHandler = start
     parser.EndElementHandler = end
     parser.CharacterDataHandler = chars
-    parser.EntityDeclHandler = entity_decl
     try:
         parser.Parse(data, True)
     except xml.parsers.expat.ExpatError as exc:
