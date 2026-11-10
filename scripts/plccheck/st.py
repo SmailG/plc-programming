@@ -243,7 +243,7 @@ class _Frame:
     line: int
     scope: dict[str, int] | None = None  # declared names, for scope openers
     body: bool = False  # statements allowed at this level
-    owner: "_Frame | None" = field(default=None, repr=False)  # nearest scope frame at or below this one
+    owner: "_Frame | None" = field(default=None, repr=False, compare=False)  # nearest scope frame at or below this one
 
 
 def _is_zero(t: Tok) -> bool:
