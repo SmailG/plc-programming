@@ -110,7 +110,7 @@ class StAnalysis:
         )
 
 
-def tokenize(src: str, first_line: int = 1) -> tuple[list[Tok], list[Finding]]:
+def tokenize(src: str, first_line: int) -> tuple[list[Tok], list[Finding]]:
     toks: list[Tok] = []
     findings: list[Finding] = []
     i, n, line = 0, len(src), first_line

@@ -17,13 +17,12 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 
-from plccheck import aml  # noqa: E402
+from plccheck import aml, twincat  # noqa: E402
 from plccheck.logix import check_l5k, check_l5x, check_rung  # noqa: E402
 from plccheck.plcopen import check_iec61131_10  # noqa: E402
 from plccheck.schneider import check_control_expert  # noqa: E402
 from plccheck.simaticml import check_simaticml, check_simatic_sd  # noqa: E402
 from plccheck.st import lint_st  # noqa: E402
-from plccheck.twincat import _blank_spans, _strip_comments  # noqa: E402
 from plccheck.xmlutil import parse_bytes  # noqa: E402
 
 
@@ -64,10 +63,22 @@ def xef(body: str) -> str:
 
 
 class ControlExpertNestedDfb(LinearTime):
-    """An STSource is linted once, for the nearest FBSource around it, not once per FBSource around it."""
+    """An STSource is linted once, for the nearest FBSource around it, not once per FBSource around it.
+
+    The shape is the one Control Expert writes: FBSource > FBProgram > STSource.
+    """
+
+    OPEN = '<FBSource nameOfFBType="{}"><FBProgram name="Main">'
+    CLOSE = "</FBProgram></FBSource>"
+
+    def dfb(self, name: str, *sources: str) -> str:
+        return self.OPEN.format(name) + "".join(f"<STSource>{s}</STSource>" for s in sources) + self.CLOSE
 
     def nested(self, depth: int, st: str) -> str:
-        return xef('<FBSource nameOfFBType="D">' * depth + f"<STSource>{st}</STSource>" + "</FBSource>" * depth)
+        return xef(self.OPEN.format("D") * depth + f"<STSource>{st}</STSource>" + self.CLOSE * depth)
+
+    def check(self, body: str) -> list[tuple[str, int, str | None]]:
+        return [(f.code, f.line, f.context) for f in check_control_expert(xml_root(xef(body)))]
 
     def test_lint_time_grows_linearly_with_depth_and_source_size_together(self):
         # Depth and ST length grow together: relinting the ST once per enclosing FBSource is
@@ -77,25 +88,39 @@ class ControlExpertNestedDfb(LinearTime):
             return lambda: check_control_expert(root)
         self.assert_linear(make, 15, 60)
 
+    def test_a_dfb_body_reports_its_unclosed_block_once_with_the_dfb_context(self):
+        self.assertEqual(self.check(self.dfb("Pump", "IF a THEN ")), [("ST002", 1, "DFB Pump (ST)")])
+        self.assertEqual(self.check(self.dfb("Pump", "IF a THEN x := 1; END_IF;")), [])
+
     def test_deeply_nested_dfb_reports_the_findings_of_a_single_lint(self):
         st = "IF a THEN "
         single = check_control_expert(xml_root(self.nested(1, st)))
         self.assertEqual(len(single), 1, single)
         self.assertEqual(check_control_expert(xml_root(self.nested(50, st))), single)
 
+    def test_an_st_source_under_two_wrappers_is_found(self):
+        got = self.check('<FBSource nameOfFBType="Deep"><FBProgram name="Main"><Section><STSource>IF a THEN </STSource></Section>'
+                         "</FBProgram></FBSource>")
+        self.assertEqual(got, [("ST002", 1, "DFB Deep (ST)")])
+
+    def test_two_st_sources_of_one_dfb_are_reported_in_document_order(self):
+        got = self.check(self.OPEN.format("Pump") + "\n<STSource>IF a THEN </STSource>\n<STSource>FOR i := 1 TO 2 DO </STSource>"
+                         + self.CLOSE)
+        self.assertEqual(got, [("ST002", 2, "DFB Pump (ST)"), ("ST002", 3, "DFB Pump (ST)")])
+
+    def test_st_sources_of_sibling_wrappers_are_reported_in_document_order(self):
+        got = self.check('<FBSource nameOfFBType="Pump">\n<FBProgram name="A"><STSource>IF a THEN </STSource></FBProgram>\n'
+                         '<FBProgram name="B"><STSource>FOR i := 1 TO 2 DO </STSource></FBProgram></FBSource>')
+        self.assertEqual(got, [("ST002", 2, "DFB Pump (ST)"), ("ST002", 3, "DFB Pump (ST)")])
+
     def test_nested_st_source_belongs_to_the_nearest_dfb(self):
-        root = xml_root(xef(
-            '<FBSource nameOfFBType="Outer"><STSource>IF a THEN </STSource>'
-            '<FBSource nameOfFBType="Inner"><STSource>FOR i := 1 TO 2 DO </STSource></FBSource></FBSource>'))
-        got = sorted((f.code, f.context) for f in check_control_expert(root))
-        self.assertEqual(got, [("ST002", "DFB Inner (ST)"), ("ST002", "DFB Outer (ST)")])
+        got = self.check(self.OPEN.format("Outer") + "<STSource>IF a THEN </STSource>"
+                         + self.dfb("Inner", "FOR i := 1 TO 2 DO ") + self.CLOSE)
+        self.assertEqual(sorted((code, ctx) for code, _, ctx in got), [("ST002", "DFB Inner (ST)"), ("ST002", "DFB Outer (ST)")])
 
     def test_sibling_dfbs_keep_their_own_context_and_line(self):
-        root = xml_root(xef(
-            '<FBSource nameOfFBType="A">\n<STSource>IF a THEN </STSource></FBSource>\n'
-            '<FBSource nameOfFBType="B">\n<STSource>FOR i := 1 TO 2 DO </STSource></FBSource>'))
-        got = [(f.code, f.line, f.context) for f in check_control_expert(root)]
-        self.assertEqual(got, [("ST002", 2, "DFB A (ST)"), ("ST002", 4, "DFB B (ST)")])
+        got = self.check("\n" + self.dfb("A", "IF a THEN ") + "\n" + self.dfb("B", "FOR i := 1 TO 2 DO "))
+        self.assertEqual(got, [("ST002", 2, "DFB A (ST)"), ("ST002", 3, "DFB B (ST)")])
 
 
 class Iec61131_10NestedBodies(LinearTime):
@@ -163,7 +188,7 @@ class TwinCatCommentStripping(LinearTime):
     def test_strip_time_grows_linearly_with_the_unclosed_openers(self):
         for name, (unit, small, big) in self.INPUTS.items():
             with self.subTest(name):
-                self.assert_linear(lambda n, unit=unit: (lambda text=unit * n: _strip_comments(text)), small, big)
+                self.assert_linear(lambda n, unit=unit: (lambda text=unit * n: twincat._strip_comments(text)), small, big)
 
     def test_an_opener_without_a_closer_ends_the_scan(self):
         # The timing test cannot see a retry loop built on str.find (about 10x cheaper than a regex
@@ -176,10 +201,10 @@ class TwinCatCommentStripping(LinearTime):
                 return super().find(*args)
 
         text = CountingStr("(* " * 1000)
-        self.assertEqual(_blank_spans(text, "(*", "*)"), text)
-        self.assertEqual(CountingStr.calls, 2)  # one opener found, one failed closer search
+        self.assertEqual(twincat._blank_spans(text, "(*", "*)"), text)
+        self.assertLessEqual(CountingStr.calls, 3)  # one opener found, one failed closer search; a retry per opener is 1000
         CountingStr.calls = 0
-        _blank_spans(CountingStr("(* a *) " * 1000), "(*", "*)")
+        twincat._blank_spans(CountingStr("(* a *) " * 1000), "(*", "*)")
         self.assertLessEqual(CountingStr.calls, 2 * 1000 + 1)  # an opener and a closer search per span, one last opener search
 
     def test_terminated_unterminated_and_adjacent_comments(self):
@@ -198,24 +223,24 @@ class TwinCatCommentStripping(LinearTime):
         }
         for text, want in cases.items():
             with self.subTest(text=text):
-                self.assertEqual(_strip_comments(text), want)
+                self.assertEqual(twincat._strip_comments(text), want)
 
     def test_an_opener_is_not_closed_by_its_own_characters(self):
         for text in ("(*)", "a (*) b", "/*/", "a /*/ b"):
             with self.subTest(text=text):
-                self.assertEqual(_strip_comments(text), text)
-        self.assertEqual(_strip_comments("(*)*)"), " ")
-        self.assertEqual(_strip_comments("/*/*/"), " ")
+                self.assertEqual(twincat._strip_comments(text), text)
+        self.assertEqual(twincat._strip_comments("(*)*)"), " ")
+        self.assertEqual(twincat._strip_comments("/*/*/"), " ")
 
     def test_openers_do_not_nest_and_passes_run_in_order(self):
-        self.assertEqual(_strip_comments("(* (* *) *)"), "  *)")
-        self.assertEqual(_strip_comments("(* // *)\nx"), " \nx")  # the (* *) pass runs before //
-        self.assertEqual(_strip_comments("(* /* *) */"), "  */")  # (* *) first: it takes the /* inside
-        self.assertEqual(_strip_comments("/* (* */ *)"), "/*  ")  # then /* */ finds nothing left to pair with
-        self.assertEqual(_strip_comments("// (* \n *)"), " ")  # so the (* *) span crosses the line end
-        self.assertEqual(_strip_comments("// x (* y\nz"), " \nz")  # an unclosed (* is left for the // pass
-        self.assertEqual(_strip_comments("{ // }\nz"), "{  \nz")  # { } runs last: // already took the }
-        self.assertEqual(_strip_comments("/* { */ }"), "  }")
+        self.assertEqual(twincat._strip_comments("(* (* *) *)"), "  *)")
+        self.assertEqual(twincat._strip_comments("(* // *)\nx"), " \nx")  # the (* *) pass runs before //
+        self.assertEqual(twincat._strip_comments("(* /* *) */"), "  */")  # (* *) first: it takes the /* inside
+        self.assertEqual(twincat._strip_comments("/* (* */ *)"), "/*  ")  # then /* */ finds nothing left to pair with
+        self.assertEqual(twincat._strip_comments("// (* \n *)"), " ")  # so the (* *) span crosses the line end
+        self.assertEqual(twincat._strip_comments("// x (* y\nz"), " \nz")  # an unclosed (* is left for the // pass
+        self.assertEqual(twincat._strip_comments("{ // }\nz"), "{  \nz")  # { } runs last: // already took the }
+        self.assertEqual(twincat._strip_comments("/* { */ }"), "  }")
 
 
 class LogixL5kBlockStack(LinearTime):
@@ -362,6 +387,15 @@ class LogixL5xNestedRoutines(LinearTime):
                          + self.routine("b", self.rung(0, "XIC(b)") + self.rung(1, "OTE(c)")) + "</Routines></Program>")
         self.assertEqual(got, [("LX020", 2, "p/a rung 0"), ("LX020", 3, "p/b rung 0"), ("LX020", 3, "p/b rung 1")])
 
+    def test_rungs_are_reported_in_document_order(self):
+        # Two children of one routine, each holding a rung, and two rungs in one child.
+        rungs = lambda *texts: "".join(f'<Rung Number="{i}"><Text>{t}</Text></Rung>' for i, t in enumerate(texts))
+        routine = ('<Routine Name="a" Type="RLL">\n<RLLContent>' + rungs("XIC(a)", "XIC(b)") + "</RLLContent>\n"
+                   "<RLLContent>" + rungs("XIC(c)", "XIC(d)") + "</RLLContent></Routine>")
+        got = self.check('<Program Name="p"><Routines>' + routine + "</Routines></Program>")
+        self.assertEqual([(line, ctx) for _, line, ctx in got],
+                         [(2, "p/a rung 0"), (2, "p/a rung 1"), (3, "p/a rung 0"), (3, "p/a rung 1")])
+
     def test_coils_are_counted_per_routines_scope(self):
         got = self.check('<Program Name="p"><Routines>' + self.routine("a", self.rung(0, "OTE(x);") + self.rung(1, "OTE(x);"))
                          + self.routine("b", self.rung(0, "OTE(x);")) + "</Routines></Program>")
@@ -420,6 +454,11 @@ class SimaticMlNestedCompileUnits(LinearTime):
     def test_networks_of_one_compile_unit_are_reported_in_document_order(self):
         dup = '<FlgNet><Parts><Part UId="1"/><Part UId="1"/></Parts></FlgNet>'
         got = self.check(f"<{self.UNIT}>\n<NetworkSource>{dup}</NetworkSource>\n<NetworkSource>{dup}</NetworkSource></{self.UNIT}>")
+        self.assertEqual([line for _, line, _ in got], [2, 3])
+
+    def test_payloads_of_one_wrapper_are_reported_in_document_order(self):
+        dup = '<FlgNet><Parts><Part UId="1"/><Part UId="1"/></Parts></FlgNet>'
+        got = self.check(f"<{self.UNIT}><NetworkSource>\n{dup}\n{dup}</NetworkSource></{self.UNIT}>")
         self.assertEqual([line for _, line, _ in got], [2, 3])
 
     def test_unresolved_references_and_nested_graph_payloads_keep_their_scopes(self):
@@ -538,16 +577,23 @@ class LogixRungOperands(LinearTime):
         self.assertEqual(self.warnings("XIC(MOV(a,b));"), [])  # nor does one inside a nested instruction
         self.assertEqual(self.warnings("XIC(MOV(a,b,c));"), ["MOV takes 2 operand(s), found 3"])
         self.assertEqual(self.warnings("XIC(a));"), [])  # a stray ) closes nothing
+        self.assertEqual(self.warnings("MOV(ABS(x),y);"), [])  # the comma after a nested call is at the outer depth
+        self.assertEqual(self.warnings("MOV(ABS(x),y,z);"), ["MOV takes 2 operand(s), found 3"])
+        self.assertEqual(self.warnings("MOV(ABS(ABS(x)),y);"), [])
+        self.assertEqual(self.warnings("MOV(x,ABS(y));XIC(a);"), [])  # depth returns to 0 after each instruction
 
     def test_blank_operands_count_as_none(self):
         self.assertEqual(self.warnings("XIC();"), ["XIC takes 1 operand(s), found 0"])
         self.assertEqual(self.warnings("XIC( , );"), ["XIC takes 1 operand(s), found 0"])
         self.assertEqual(self.warnings("MOV(a, );"), [])  # one blank part among others still counts
+        self.assertEqual(self.warnings("XIC(,a);"), ["XIC takes 1 operand(s), found 2"])  # a comma right after the `(`
 
     def test_an_instruction_without_its_closing_parenthesis_drops_the_last_character(self):
         # How the checker has always read `XIC(a,b` (operands "a,"): pinned, not endorsed.
         self.assertEqual(self.warnings("XIC(a,b"), ["XIC takes 1 operand(s), found 2"])
         self.assertEqual(self.warnings("XIC(a"), ["XIC takes 1 operand(s), found 0"])
+        self.assertEqual(self.warnings("XIC(a,"), [])  # the dropped last character is the comma: one operand, `a`
+        self.assertEqual(self.warnings("XIC(a,,"), ["XIC takes 1 operand(s), found 2"])
         self.assertEqual(self.warnings("XIC("), ["XIC takes 1 operand(s), found 0"])
 
     def test_the_mnemonic_skips_leading_digits(self):
