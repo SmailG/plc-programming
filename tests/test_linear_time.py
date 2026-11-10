@@ -18,7 +18,7 @@ sys.path.insert(0, str(HERE.parent / "scripts"))
 from plccheck.logix import check_l5k, check_l5x  # noqa: E402
 from plccheck.plcopen import check_iec61131_10  # noqa: E402
 from plccheck.schneider import check_control_expert  # noqa: E402
-from plccheck.simaticml import check_simatic_sd  # noqa: E402
+from plccheck.simaticml import check_simaticml, check_simatic_sd  # noqa: E402
 from plccheck.st import lint_st  # noqa: E402
 from plccheck.twincat import _blank_spans, _strip_comments  # noqa: E402
 from plccheck.xmlutil import parse_bytes  # noqa: E402
@@ -375,6 +375,65 @@ class LogixL5xNestedRoutines(LinearTime):
         got = self.check('<Program Name="p"><Routines>' + self.routine("a", self.rung(0, "XIC(a)"),
                          "<Routines>" + self.routine("in", self.rung(0, "XIC(b)")) + "</Routines>") + "</Routines></Program>")
         self.assertEqual(got, [("LX020", 1, "p/a rung 0"), ("LX020", 1, "a/in rung 0")])
+
+
+class SimaticMlNestedCompileUnits(LinearTime):
+    """A network payload is checked for the CompileUnit it is in, not once for every CompileUnit around it."""
+
+    UNIT = "SW.Blocks.CompileUnit"
+    PART = '<FlgNet><Parts><Part UId="1"/></Parts></FlgNet>'
+    DUP = '<FlgNet><Parts><Part UId="1"/><Part UId="1"/></Parts></FlgNet>'  # one SM020
+
+    def unit(self, *payloads: str) -> str:
+        """A CompileUnit with each payload under its NetworkSource, as TIA writes it."""
+        return f"<{self.UNIT}>" + "".join(f"<NetworkSource>{p}</NetworkSource>" for p in payloads) + f"</{self.UNIT}>"
+
+    def document(self, units: str) -> str:
+        return ('<Document><Engineering version="V18"/><SW.Blocks.FB><AttributeList><Name>B</Name></AttributeList>'
+                f"<ObjectList>{units}</ObjectList></SW.Blocks.FB></Document>")
+
+    def nested(self, depth: int, payload: str) -> str:
+        return self.document(f"<{self.UNIT}><NetworkSource>{payload}</NetworkSource>" * depth + f"</{self.UNIT}>" * depth)
+
+    def check(self, units: str) -> list[tuple[str, int, str | None]]:
+        return [(f.code, f.line, f.context) for f in check_simaticml(xml_root(self.document(units)))]
+
+    def test_check_time_grows_linearly_with_the_nesting_depth(self):
+        # Collecting the payloads of the whole subtree for every CompileUnit is quadratic in the
+        # depth (about 16x for 4x); one visit per payload is linear (about 4x).
+        def make(n):
+            root = xml_root(self.nested(n, self.PART))
+            return lambda: check_simaticml(root)
+        self.assert_linear(make, 150, 600)
+
+    def test_deeply_nested_compile_units_report_each_network_once(self):
+        found = check_simaticml(xml_root(self.nested(50, self.DUP)))
+        self.assertEqual([f.code for f in found], ["SM020"] * 50)
+
+    def test_sibling_compile_units_are_separate_scopes(self):
+        self.assertEqual(self.check(self.unit(self.PART) + self.unit(self.PART)), [])
+        self.assertEqual(self.check(f"\n{self.unit(self.DUP)}\n{self.unit(self.PART)}"), [("SM020", 2, "SW.Blocks.FB B")])
+
+    def test_networks_of_one_compile_unit_are_reported_in_document_order(self):
+        dup = '<FlgNet><Parts><Part UId="1"/><Part UId="1"/></Parts></FlgNet>'
+        got = self.check(f"<{self.UNIT}>\n<NetworkSource>{dup}</NetworkSource>\n<NetworkSource>{dup}</NetworkSource></{self.UNIT}>")
+        self.assertEqual([line for _, line, _ in got], [2, 3])
+
+    def test_unresolved_references_and_nested_graph_payloads_keep_their_scopes(self):
+        graph = ('<Graph><Parts><Part UId="1"/></Parts><FlgNet><Parts><Part UId="1"/></Parts>'
+                 '<Wires><IdentCon UId="9"/></Wires></FlgNet></Graph>')
+        self.assertEqual(self.check(self.unit(graph)), [("SM021", 1, "SW.Blocks.FB B")])
+
+    def test_payloads_of_a_nested_compile_unit_belong_to_it(self):
+        # Not a valid structure; pinned so the scope is a decision, not an accident of the walk. The
+        # outer unit's payload reuses UId 1 with the inner one's and neither sees the other.
+        inner = self.unit(self.DUP)
+        self.assertEqual(self.check(f"<{self.UNIT}><NetworkSource>{self.PART}</NetworkSource>{inner}</{self.UNIT}>"),
+                         [("SM020", 1, "SW.Blocks.FB B")])
+
+    def test_a_compile_unit_inside_a_payload_does_not_lend_its_parts_to_it(self):
+        part_in_unit = f'<Parts><Part UId="1"/></Parts><{self.UNIT}><Part UId="1"/></{self.UNIT}>'
+        self.assertEqual(self.check(self.unit(f"<FlgNet>{part_in_unit}</FlgNet>")), [])
 
 
 if __name__ == "__main__":
