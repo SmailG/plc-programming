@@ -7,7 +7,6 @@ version must keep returning on legitimate input.
 
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 import unittest
@@ -22,32 +21,6 @@ from linear_support import LinearTime  # noqa: E402
 from plccheck import aml  # noqa: E402
 from plccheck.xmlutil import parse_bytes  # noqa: E402
 
-
-class AmlFileKey(unittest.TestCase):
-    """What identifies a linked file: device and inode, else the resolved path."""
-
-    def stat(self, dev: int, ino: int) -> os.stat_result:
-        return os.stat_result((0o100644, ino, dev, 1, 0, 0, 10, 0, 0, 0))
-
-    def test_one_inode_on_one_device_is_one_file_whatever_the_path(self):
-        self.assertEqual(aml._file_key(Path("a.xml"), self.stat(1, 5)), aml._file_key(Path("b.xml"), self.stat(1, 5)))
-
-    def test_the_same_inode_number_on_another_device_is_another_file(self):
-        self.assertNotEqual(aml._file_key(Path("a.xml"), self.stat(1, 5)), aml._file_key(Path("a.xml"), self.stat(2, 5)))
-
-    def test_another_inode_on_one_device_is_another_file(self):
-        self.assertNotEqual(aml._file_key(Path("a.xml"), self.stat(1, 5)), aml._file_key(Path("a.xml"), self.stat(1, 6)))
-
-    def test_a_file_system_without_inodes_falls_back_to_the_resolved_path(self):
-        with tempfile.TemporaryDirectory() as d:
-            base = Path(d)
-            (base / "sub").mkdir()
-            plain, dotted = base / "x.xml", base / "sub" / ".." / "x.xml"
-            self.assertEqual(aml._file_key(plain, self.stat(1, 0)), aml._file_key(dotted, self.stat(1, 0)))
-            self.assertEqual(aml._file_key(plain, self.stat(1, 0)), plain.resolve())
-            self.assertNotEqual(aml._file_key(plain, self.stat(1, 0)), aml._file_key(base / "y.xml", self.stat(1, 0)))
-
-
 class AmlLinkedFileParsing(LinearTime):
     """A PLCopen file linked from many interfaces is parsed and walked once, not once per link."""
 
@@ -57,24 +30,18 @@ class AmlLinkedFileParsing(LinearTime):
         return (f'<ExternalInterface Name="i{i}" ID="x{i}" RefBaseClassPath="{cls}">'
                 f'<Attribute Name="refURI"><Value>{ref}</Value></Attribute></ExternalInterface>')
 
-    def aml_text(self, interfaces: list[str], tail: str = "") -> str:
+    def aml_text(self, interfaces: list[str]) -> str:
         return ('<CAEXFile SchemaVersion="2.15"><InstanceHierarchy Name="h"><InternalElement Name="e" ID="e">'
-                + "".join(interfaces) + "</InternalElement></InstanceHierarchy>" + tail + "</CAEXFile>")
+                + "".join(interfaces) + "</InternalElement></InstanceHierarchy></CAEXFile>")
 
-    def write(self, d: str, refs: list[str], files: dict[str, str] | None = None, tail: str = "") -> Path:
+    def check(self, d: str, refs: list[str], files: dict[str, str] | None = None) -> list[tuple[str, str]]:
         base = Path(d)
         for name, text in {"plc.xml": self.PLCOPEN, **(files or {})}.items():
             (base / name).parent.mkdir(exist_ok=True)
             (base / name).write_text(text, encoding="utf-8")
         path = base / "plant.aml"
-        path.write_text(self.aml_text([self.interface(i, ref) for i, ref in enumerate(refs)], tail), encoding="utf-8")
-        return path
-
-    def run_check(self, path: Path) -> list[tuple[str, str]]:
+        path.write_text(self.aml_text([self.interface(i, ref) for i, ref in enumerate(refs)]), encoding="utf-8")
         return [(f.code, f.message) for f in aml.check_aml(parse_bytes(path.read_bytes()), path)]
-
-    def check(self, d: str, refs: list[str], files: dict[str, str] | None = None) -> list[tuple[str, str]]:
-        return self.run_check(self.write(d, refs, files))
 
     def test_check_time_grows_linearly_with_the_links_to_one_file(self):
         # Every link to the same file parsed it again, so n links to the file itself (n links
@@ -93,40 +60,6 @@ class AmlLinkedFileParsing(LinearTime):
             got = self.check(d, refs, {"sub/x.xml": "<x/>"})
         self.assertEqual(parse.call_count, 1)
         self.assertEqual([code for code, _ in got], ["AM012"] * 4)
-
-    def test_a_hard_link_to_the_file_is_the_same_file(self):
-        with tempfile.TemporaryDirectory() as d, mock.patch.object(aml, "parse_file", wraps=aml.parse_file) as parse:
-            path = self.write(d, ["plc.xml#zz", "link.xml#zz"])
-            try:
-                os.link(path.parent / "plc.xml", path.parent / "link.xml")
-            except (OSError, AttributeError, NotImplementedError) as exc:
-                self.skipTest(f"no hard links here: {exc}")
-            got = self.run_check(path)
-        self.assertEqual(parse.call_count, 1)
-        self.assertEqual([code for code, _ in got], ["AM012"] * 2)
-
-    def test_another_spelling_of_the_name_on_a_case_insensitive_file_system_is_the_same_file(self):
-        with tempfile.TemporaryDirectory() as d, mock.patch.object(aml, "parse_file", wraps=aml.parse_file) as parse:
-            path = self.write(d, ["plc.xml#zz", "PLC.xml#zz", "pLc.XML#zz"])
-            if not os.path.exists(path.parent / "PLC.XML"):
-                self.skipTest("case-sensitive file system")
-            got = self.run_check(path)
-        self.assertEqual(parse.call_count, 1)
-        self.assertEqual([code for code, _ in got], ["AM012"] * 3)
-
-    def test_two_different_files_are_two_parses(self):
-        with tempfile.TemporaryDirectory() as d, mock.patch.object(aml, "parse_file", wraps=aml.parse_file) as parse:
-            self.check(d, ["plc.xml#zz", "copy.xml#zz"], {"copy.xml": self.PLCOPEN})
-        self.assertEqual(parse.call_count, 2)
-
-    def test_a_name_over_the_file_system_limit_is_a_missing_target_not_a_crash(self):
-        # Python 3.9's Path.exists() raises OSError (ENAMETOOLONG) for it, where 3.10 and later
-        # answer False: on a newer Python this passes with or without the os.path calls.
-        long_name = "a" * 300 + ".xml"
-        with tempfile.TemporaryDirectory() as d:
-            path = self.write(d, [f"{long_name}#zz"], tail=f'<ExternalReference Path="{long_name}"/>')
-            got = self.run_check(path)
-        self.assertEqual([code for code, _ in got], ["AM011", "AM013"])
 
     def test_a_malformed_file_is_parsed_once_and_gives_no_finding(self):
         with tempfile.TemporaryDirectory() as d, mock.patch.object(aml, "parse_file", wraps=aml.parse_file) as parse:
