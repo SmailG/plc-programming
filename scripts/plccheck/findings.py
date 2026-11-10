@@ -4,6 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# A message or context quotes names from the file, and a context is repeated on every finding
+# under it, so one long name times many findings is quadratic in the file size. The longest
+# message in the tests is 195 characters and the longest context 26.
+MAX_FINDING_TEXT = 400
+ELLIPSIS = "…"
+
+
+def _clip(text: str) -> str:
+    """`text` as is, or cut to MAX_FINDING_TEXT characters, the last being an ellipsis."""
+    if len(text) <= MAX_FINDING_TEXT:
+        return text
+    return text[: MAX_FINDING_TEXT - len(ELLIPSIS)] + ELLIPSIS
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -12,6 +25,12 @@ class Finding:
     message: str
     line: int | None = None
     context: str | None = None  # e.g. "POU FB_Motor body (ST)"
+
+    def __post_init__(self) -> None:
+        # Every finding is built through here (error(), warning() and with_context() end in Finding(...)).
+        object.__setattr__(self, "message", _clip(self.message))
+        if self.context is not None:
+            object.__setattr__(self, "context", _clip(self.context))
 
     def format(self, path: str) -> str:
         where = f"{path}:{self.line}" if self.line else path
