@@ -1,7 +1,7 @@
 """Minimal namespace-aware XML tree with line numbers (expat, stdlib only).
 
 ElementTree drops line numbers, and a finding without a line is half as useful.
-External entities and DTDs are never fetched.
+External entities and DTDs are never fetched, and entity declarations are refused.
 """
 
 from __future__ import annotations
@@ -66,6 +66,7 @@ def parse_bytes(data: bytes) -> Node:
     parser.SetParamEntityParsing(xml.parsers.expat.XML_PARAM_ENTITY_PARSING_NEVER)
     root: list[Node] = []
     stack: list[Node] = []
+    chunks: list[list[str]] = []  # character data of each open element, joined once at its end
 
     def split(name: str) -> tuple[str, str]:
         if "}" in name:
@@ -81,20 +82,26 @@ def parse_bytes(data: bytes) -> Node:
         else:
             root.append(node)
         stack.append(node)
+        chunks.append([])
 
     def end(_name):
-        stack.pop()
+        node = stack.pop()
+        node.text = "".join(chunks.pop())
 
     def chars(data):
         if stack:
-            node = stack[-1]
-            if not node.text:
-                node.text_line = parser.CurrentLineNumber
-            node.text += data
+            if not chunks[-1]:
+                stack[-1].text_line = parser.CurrentLineNumber
+            chunks[-1].append(data)
+
+    def entity_decl(*_args):
+        # Expanding entities makes the work grow with the nesting, not the file size.
+        raise XmlError("XML entity declarations are not supported", parser.CurrentLineNumber)
 
     parser.StartElementHandler = start
     parser.EndElementHandler = end
     parser.CharacterDataHandler = chars
+    parser.EntityDeclHandler = entity_decl
     try:
         parser.Parse(data, True)
     except xml.parsers.expat.ExpatError as exc:

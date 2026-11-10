@@ -42,5 +42,9 @@ claude plugin validate .
 claude plugin eval . --trust-plugin --allow-tools Write Edit "Bash(python3 *)" --no-publish
 ```
 
+Run mutation tests (by hand or with an AI agent) one at a time, each as
+`timeout -k 10 300 <cmd>`: an external wrapper, because a timeout inside the runner dies with
+it. Check for leftover processes at the end.
+
 Read an eval's `Δ` (with plugin minus without), not its score: a case the baseline already
 passes shows nothing about the plugin. See the README for the macOS eval workaround.

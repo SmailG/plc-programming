@@ -17,6 +17,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 
 import plc_validate  # noqa: E402
+from plccheck.xmlutil import XmlError, parse_bytes  # noqa: E402
 
 PLCOPEN = """<?xml version="1.0" encoding="utf-8"?>
 <project xmlns="http://www.plcopen.org/xml/tc6_0201" xmlns:xhtml="http://www.w3.org/1999/xhtml">
@@ -452,6 +453,69 @@ class OtherBreakage(unittest.TestCase):
 
     def test_broken_xml(self):
         self.assertEqual(codes({"x.TcPOU": "<TcPlcObject><POU></TcPlcObject>"})[1], ["XML001"])
+
+
+class XmlEntityGuard(unittest.TestCase):
+    """An entity declaration is refused; a bare DOCTYPE and plain text are not."""
+
+    ENTITY_DOC = '<?xml version="1.0"?>\n<!DOCTYPE x [\n<!ENTITY x "y">\n]>\n<x>&x;</x>\n'
+
+    def refused(self, data: bytes) -> XmlError:
+        with self.assertRaises(XmlError) as ctx:
+            parse_bytes(data)
+        return ctx.exception
+
+    def test_entity_declaration_is_refused_with_its_line(self):
+        exc = self.refused(self.ENTITY_DOC.encode())
+        self.assertEqual(str(exc), "XML entity declarations are not supported")
+        self.assertEqual(exc.line, 3)
+
+    def test_utf16_entity_declaration_is_refused(self):
+        exc = self.refused(self.ENTITY_DOC.replace('"1.0"?>', '"1.0" encoding="utf-16"?>').encode("utf-16"))
+        self.assertEqual((str(exc), exc.line), ("XML entity declarations are not supported", 3))
+
+    def test_every_declaration_kind_is_refused(self):
+        kinds = {
+            "internal": '<!ENTITY x "y">',
+            "parameter": '<!ENTITY % p "y">',
+            "external": '<!ENTITY x SYSTEM "file.txt">',
+            "unparsed": '<!NOTATION n SYSTEM "n"><!ENTITY x SYSTEM "file.bin" NDATA n>',
+        }
+        for name, decl in kinds.items():
+            with self.subTest(kind=name):
+                exc = self.refused(f"<!DOCTYPE x [{decl}]><x/>".encode())
+                self.assertEqual(str(exc), "XML entity declarations are not supported")
+
+    def test_entity_declaration_is_an_xml001_finding(self):
+        doc = PLCOPEN.replace("<project", '<!DOCTYPE project [<!ENTITY x "y">]>\n<project', 1)
+        fmt, findings = plc_validate.check_file(self.write("a.xml", doc), None)
+        self.assertEqual((fmt, [(f.code, f.line) for f in findings]), ("plcopen", [("XML001", 2)]))
+
+    def write(self, name: str, content: str) -> Path:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / name
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_doctype_with_external_dtd_still_validates(self):
+        dtd = '<!DOCTYPE FBType SYSTEM "http://www.holobloc.com/xml/LibraryElement.dtd">\n'
+        fbdk = FBT.replace("<FBType", dtd + "<FBType", 1)
+        self.assertEqual(codes({"E_Toggle.fbt": fbdk}), ("iec61499", []))
+        self.assertEqual(parse_bytes(fbdk.encode()).tag, "FBType")
+
+    def test_text_chunks_join_into_one_text_per_node(self):
+        data = ("<r>" + "x&lt;" * 200 + "<c>in</c>tail&amp;<![CDATA[cd]]>\n<c/>end</r>").encode()
+        root = parse_bytes(data)
+        self.assertEqual(root.text, "x<" * 200 + "tail&cd\nend")
+        self.assertEqual(root.text_line, 1)
+        self.assertEqual([c.text for c in root.children], ["in", ""])
+
+    def test_text_line_is_the_first_chunk_line(self):
+        root = parse_bytes(b"<r>\n<a/>\nlate</r>")
+        self.assertEqual((root.text, root.text_line), ("\n\nlate", 1))
+        root = parse_bytes(b"<r><a/>\n\n<b>x</b></r>")
+        self.assertEqual((root.text, root.text_line), ("\n\n", 1))
 
 
 class ShippedTemplates(unittest.TestCase):
