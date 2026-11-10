@@ -18,6 +18,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 
 import plc_validate  # noqa: E402
+from plccheck.st import lint_st  # noqa: E402
 from plccheck.xmlutil import XmlError, parse_bytes, sniff_root  # noqa: E402
 
 TC6_NS = "http://www.plcopen.org/xml/tc6_0201"
@@ -604,6 +605,44 @@ class XmlTextJoinScaling(unittest.TestCase):
         t_small, t_big = self.best_of_runs(self.SMALL), self.best_of_runs(self.BIG)
         self.assertLess(t_big, self.MAX_RATIO * max(t_small, self.TIMER_FLOOR),
                         f"{self.SMALL} chunks took {t_small:.3f}s, {self.BIG} chunks took {t_big:.3f}s")
+
+
+class StNestingScaling(unittest.TestCase):
+    """ST lint time must grow linearly with the nesting depth: no rescan of the open blocks per token."""
+
+    RUNS = 3
+    SMALL, BIG = 2_000, 8_000  # BIG is 4x SMALL: linear work is about 4x, quadratic about 16x
+    MAX_RATIO = 8
+    TIMER_FLOOR = 0.01  # seconds; keeps the ratio meaningful if the small run is below timer noise
+
+    # Each input leaves every block open, so the stack is n deep where a rescan would run. A scan for
+    # a keyword stops at the first match, so the IF input only exposes the loop scan and the FOR input the
+    # conditional scan.
+    INPUTS = {
+        "word tokens and scope lookup in n open IF": lambda n: "IF a THEN " * n,
+        "word tokens in n open FOR (no IF/CASE to stop the conditional scan early)": lambda n: "FOR a DO " * n,
+        "EXIT with n open IF and no loop": lambda n: "IF a THEN " * n + "EXIT;" * n,
+        "closer matching nothing over n open IF": lambda n: "IF a THEN " * n + "END_FOR;" * n,
+    }
+
+    def best_of_runs(self, src: str) -> float:
+        best = float("inf")
+        for _ in range(self.RUNS):
+            start = time.perf_counter()
+            lint_st(src)
+            best = min(best, time.perf_counter() - start)
+        return best
+
+    def test_lint_time_grows_linearly_with_the_nesting_depth(self):
+        # A ratio, not an absolute bound, so a slow CI runner does not flake: both sizes slow
+        # down together. Best of three drops a run that a scheduling hiccup inflated, which would
+        # otherwise push the ratio up. Rescanning the whole stack for every token is quadratic and
+        # lands near 16x; per-block counts and a scope pointer land near 4x.
+        for name, make in self.INPUTS.items():
+            with self.subTest(name):
+                t_small, t_big = self.best_of_runs(make(self.SMALL)), self.best_of_runs(make(self.BIG))
+                self.assertLess(t_big, self.MAX_RATIO * max(t_small, self.TIMER_FLOOR),
+                                f"depth {self.SMALL} took {t_small:.3f}s, depth {self.BIG} took {t_big:.3f}s")
 
 
 class ShippedTemplates(unittest.TestCase):
