@@ -210,6 +210,12 @@ class OpenBlockStateTests(unittest.TestCase):
         f = check_st_file(self.prog("IF x THEN FOR i := 1 TO 3 DO i := i; END_FOR; tonA(IN := x, PT := T#1S); END_IF;"))
         self.assertEqual(codes(f), ["ST030"])
 
+    def test_timer_inside_case_is_conditional(self):
+        self.assertEqual(codes(check_st_file(self.prog("CASE i OF 1: tonA(IN := x, PT := T#1S); END_CASE;"))), ["ST030"])
+
+    def test_exit_inside_repeat_is_inside_a_loop(self):
+        self.assertEqual(codes(check_st_file("REPEAT EXIT; UNTIL x END_REPEAT;\n")), [])
+
     def test_timer_after_closer_that_discards_an_open_if_is_unconditional(self):
         f = check_st_file(self.prog("FOR i := 1 TO 3 DO IF x THEN END_FOR;\ntonA(IN := x, PT := T#1S);"))
         self.assertEqual(codes(f), ["ST002"])

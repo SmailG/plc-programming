@@ -581,7 +581,7 @@ class XmlEntityGuard(unittest.TestCase):
 
 
 class XmlTextJoinScaling(unittest.TestCase):
-    """Text split into many chunks (one per entity reference) must parse in linear time."""
+    """Text split into many chunks (one per entity reference) must parse in linear time (CPU time)."""
 
     RUNS = 3
     SMALL, BIG = 40_000, 160_000  # BIG is 4x SMALL: linear work is about 4x, quadratic about 16x
@@ -592,14 +592,15 @@ class XmlTextJoinScaling(unittest.TestCase):
         data = (f'<project xmlns="{TC6_NS}"><a>' + "x&lt;" * n + "</a></project>").encode()
         best = float("inf")
         for _ in range(self.RUNS):
-            start = time.perf_counter()
+            start = time.process_time()
             parse_bytes(data)
-            best = min(best, time.perf_counter() - start)
+            best = min(best, time.process_time() - start)
         return best
 
     def test_text_join_time_grows_linearly_with_the_chunk_count(self):
         # A ratio, not an absolute bound, so a slow CI runner does not flake: both sizes slow
-        # down together. Best of three drops a run that a scheduling hiccup inflated, which would
+        # down together. Process (CPU) time, not wall time: both are single-thread CPU-bound, and it
+        # drops scheduler noise. Best of three drops a run that a hiccup inflated, which would
         # otherwise push the ratio up. Appending each chunk to node.text copies the text so far
         # each time (quadratic) and lands near 16x; one join per element lands near 4x.
         t_small, t_big = self.best_of_runs(self.SMALL), self.best_of_runs(self.BIG)
@@ -608,7 +609,7 @@ class XmlTextJoinScaling(unittest.TestCase):
 
 
 class StNestingScaling(unittest.TestCase):
-    """ST lint time must grow linearly with the nesting depth: no rescan of the open blocks per token."""
+    """ST lint CPU time must grow linearly with the nesting depth: no rescan of the open blocks per token."""
 
     RUNS = 3
     SMALL, BIG = 2_000, 8_000  # BIG is 4x SMALL: linear work is about 4x, quadratic about 16x
@@ -628,14 +629,15 @@ class StNestingScaling(unittest.TestCase):
     def best_of_runs(self, src: str) -> float:
         best = float("inf")
         for _ in range(self.RUNS):
-            start = time.perf_counter()
+            start = time.process_time()
             lint_st(src)
-            best = min(best, time.perf_counter() - start)
+            best = min(best, time.process_time() - start)
         return best
 
     def test_lint_time_grows_linearly_with_the_nesting_depth(self):
         # A ratio, not an absolute bound, so a slow CI runner does not flake: both sizes slow
-        # down together. Best of three drops a run that a scheduling hiccup inflated, which would
+        # down together. Process (CPU) time, not wall time: both are single-thread CPU-bound, and it
+        # drops scheduler noise. Best of three drops a run that a hiccup inflated, which would
         # otherwise push the ratio up. Rescanning the whole stack for every token is quadratic and
         # lands near 16x; per-block counts and a scope pointer land near 4x.
         for name, make in self.INPUTS.items():
