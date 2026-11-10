@@ -10,6 +10,22 @@ from .xmlutil import Node
 ROOTS = {"FEFExchangeFile", "VariablesExchangeFile"}
 
 
+def _own_st_sources(fb: Node):
+    """STSource elements of this DFB, in document order, not descending into a nested FBSource.
+
+    A nested FBSource is visited by the caller's own loop. Iterating the whole subtree per
+    FBSource would lint an STSource once for every FBSource around it.
+    """
+    stack = list(reversed(fb.children))
+    while stack:
+        node = stack.pop()
+        if node.tag == "FBSource":
+            continue
+        if node.tag == "STSource":
+            yield node
+        stack.extend(reversed(node.children))
+
+
 def check_control_expert(root: Node) -> list[Finding]:
     out: list[Finding] = []
     if root.tag not in ROOTS:
@@ -40,7 +56,7 @@ def check_control_expert(root: Node) -> list[Finding]:
                 if name.upper() in seen:
                     out.append(error("CX012", f"DFB parameter/variable '{name}' declared twice", var.line, ctx))
                 seen[name.upper()] = var.line
-        for st in fb.iter("STSource"):
+        for st in _own_st_sources(fb):
             f, _ = lint_st(st.text, "body")
             out.extend(with_context(f, f"{ctx} (ST)", (st.text_line or st.line) - 1))
 
