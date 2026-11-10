@@ -8,6 +8,7 @@ does not expect, so a mismatch is the most expensive mistake in generated Simati
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from .findings import Finding, error, warning
 from .xmlutil import Node
@@ -179,6 +180,7 @@ def check_simatic_sd(text: str) -> list[Finding]:
     """SIMATIC SD (.s7dcl): only NETWORK/RUNG nesting and brace balance are checked."""
     out: list[Finding] = []
     stack: list[tuple[str, int]] = []
+    open_words: Counter[str] = Counter()  # open frames per keyword, so "is X open" is not a stack scan
     depth = 0
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = re.sub(r"//.*$", "", raw)
@@ -187,14 +189,17 @@ def check_simatic_sd(text: str) -> list[Finding]:
         for word in re.findall(r"\b(END_NETWORK|END_RUNG|NETWORK|RUNG)\b", line):
             if word in ("NETWORK", "RUNG"):
                 stack.append((word, lineno))
+                open_words[word] += 1
                 continue
             opener = word[4:]
-            pos = next((k for k in range(len(stack) - 1, -1, -1) if stack[k][0] == opener), None)
-            if pos is None:
+            if not open_words[opener]:  # else the scan would walk the whole stack to find nothing
                 out.append(error("SD001", f"{word} without matching {opener}", lineno))
                 continue
+            pos = next(k for k in range(len(stack) - 1, -1, -1) if stack[k][0] == opener)
             for inner, ln in stack[pos + 1:]:
                 out.append(error("SD001", f"{inner} opened at line {ln} is not closed before {word}", ln))
+            for kw, _ in stack[pos:]:
+                open_words[kw] -= 1
             del stack[pos:]
     for word, lineno in stack:
         out.append(error("SD001", f"{word} opened here is never closed", lineno))

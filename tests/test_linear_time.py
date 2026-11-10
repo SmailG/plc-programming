@@ -18,6 +18,7 @@ sys.path.insert(0, str(HERE.parent / "scripts"))
 from plccheck.logix import check_l5k  # noqa: E402
 from plccheck.plcopen import check_iec61131_10  # noqa: E402
 from plccheck.schneider import check_control_expert  # noqa: E402
+from plccheck.simaticml import check_simatic_sd  # noqa: E402
 from plccheck.twincat import _blank_spans, _strip_comments  # noqa: E402
 from plccheck.xmlutil import parse_bytes  # noqa: E402
 
@@ -251,6 +252,43 @@ class LogixL5kBlockStack(LinearTime):
 
     def test_blocks_left_open_are_reported_at_the_end(self):
         self.assertEqual(self.errors("PROGRAM p\nROUTINE r\nEND_ROUTINE"), [(1, "PROGRAM opened here is never closed")])
+
+
+class SimaticSdBlockStack(LinearTime):
+    """SIMATIC SD: a closer that matches no open NETWORK/RUNG is found without scanning the stack."""
+
+    def errors(self, text: str) -> list[tuple[int | None, str]]:
+        found = check_simatic_sd(text)
+        self.assertEqual({f.code for f in found}, {"SD001"} if found else set())
+        return [(f.line, f.message) for f in found]
+
+    def test_check_time_grows_linearly_with_the_open_blocks(self):
+        # Every END_RUNG matches nothing, so each one used to walk all the open NETWORK frames:
+        # quadratic in the depth (about 16x for 4x), a count lookup is linear (about 4x).
+        def make(n):
+            text = "NETWORK " * n + "END_RUNG " * n
+            return lambda: check_simatic_sd(text)
+        self.assert_linear(make, 1_000, 4_000)
+
+    def test_a_closer_matching_nothing_reports_its_error(self):
+        self.assertEqual(self.errors("END_RUNG"), [(1, "END_RUNG without matching RUNG")])
+        self.assertEqual(self.errors("NETWORK\nEND_RUNG\nEND_NETWORK"), [(2, "END_RUNG without matching RUNG")])
+
+    def test_a_matched_closer_closes_its_block(self):
+        self.assertEqual(self.errors("NETWORK\nRUNG\nEND_RUNG\nEND_NETWORK"), [])
+        self.assertEqual(self.errors("NETWORK\nEND_NETWORK\nEND_NETWORK"), [(3, "END_NETWORK without matching NETWORK")])
+        self.assertEqual(self.errors("RUNG RUNG END_RUNG END_RUNG END_RUNG"), [(1, "END_RUNG without matching RUNG")])
+
+    def test_a_closer_closes_the_blocks_inside_its_own_and_none_more(self):
+        got = self.errors("NETWORK\nRUNG\nEND_NETWORK\nEND_RUNG\nEND_NETWORK")
+        self.assertEqual(got, [
+            (2, "RUNG opened at line 2 is not closed before END_NETWORK"),
+            (4, "END_RUNG without matching RUNG"),
+            (5, "END_NETWORK without matching NETWORK"),
+        ])
+
+    def test_blocks_left_open_are_reported_at_the_end(self):
+        self.assertEqual(self.errors("NETWORK\nRUNG\nEND_RUNG"), [(1, "NETWORK opened here is never closed")])
 
 
 if __name__ == "__main__":
