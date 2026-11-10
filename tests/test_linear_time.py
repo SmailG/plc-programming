@@ -17,6 +17,7 @@ sys.path.insert(0, str(HERE.parent / "scripts"))
 
 from plccheck.plcopen import check_iec61131_10  # noqa: E402
 from plccheck.schneider import check_control_expert  # noqa: E402
+from plccheck.twincat import _blank_spans, _strip_comments  # noqa: E402
 from plccheck.xmlutil import parse_bytes  # noqa: E402
 
 
@@ -140,6 +141,75 @@ class Iec61131_10NestedBodies(LinearTime):
             '<BodyContent><Block connectionPointOutId="1"/><Connection refConnectionPointOutId="2"/></BodyContent>'
             '<Connection refConnectionPointOutId="3"/></BodyContent>')
         self.assertEqual(got, [("1,", 1), ("3,", 1), ("2,", 1)])
+
+
+class TwinCatCommentStripping(LinearTime):
+    """Comment stripping scans once; an opener that never closes must not rescan the rest of the text."""
+
+    # (opener repeated, small, big). Every opener is unclosed, so a retry from each one walks to the
+    # end of the text. The pragma case needs a bigger text: its scan is a single character class.
+    INPUTS = {
+        "(* never closed": ("(* ", 1_500, 6_000),
+        "/* never closed": ("/* ", 1_500, 6_000),
+        "{ never closed": ("{ ", 5_000, 20_000),
+    }
+
+    def test_strip_time_grows_linearly_with_the_unclosed_openers(self):
+        for name, (unit, small, big) in self.INPUTS.items():
+            with self.subTest(name):
+                self.assert_linear(lambda n, unit=unit: (lambda text=unit * n: _strip_comments(text)), small, big)
+
+    def test_an_opener_without_a_closer_ends_the_scan(self):
+        # The timing test cannot see a retry loop built on str.find (about 10x cheaper than a regex
+        # retry, so below timer noise at a test-sized input), so count the searches directly.
+        class CountingStr(str):
+            calls = 0
+
+            def find(self, *args):
+                CountingStr.calls += 1
+                return super().find(*args)
+
+        text = CountingStr("(* " * 1000)
+        self.assertEqual(_blank_spans(text, "(*", "*)"), text)
+        self.assertEqual(CountingStr.calls, 2)  # one opener found, one failed closer search
+        CountingStr.calls = 0
+        _blank_spans(CountingStr("(* a *) " * 1000), "(*", "*)")
+        self.assertLessEqual(CountingStr.calls, 2 * 1000 + 1)  # an opener and a closer search per span, one last opener search
+
+    def test_terminated_unterminated_and_adjacent_comments(self):
+        cases = {
+            "a (* c *) b": "a   b",
+            "a (* c": "a (* c",
+            "(* x *)(* y *)": "  ",
+            "a /* c */ b /* d": "a   b /* d",
+            "/* x *//* y */z": "  z",
+            "a (* x\ny *) b": "a   b",
+            "{ pragma } a { open": "  a { open",
+            "{a\n}b": " b",
+            "x // c\ny": "x  \ny",
+            "x // c": "x  ",
+            "//\n//\n": " \n \n",
+        }
+        for text, want in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(_strip_comments(text), want)
+
+    def test_an_opener_is_not_closed_by_its_own_characters(self):
+        for text in ("(*)", "a (*) b", "/*/", "a /*/ b"):
+            with self.subTest(text=text):
+                self.assertEqual(_strip_comments(text), text)
+        self.assertEqual(_strip_comments("(*)*)"), " ")
+        self.assertEqual(_strip_comments("/*/*/"), " ")
+
+    def test_openers_do_not_nest_and_passes_run_in_order(self):
+        self.assertEqual(_strip_comments("(* (* *) *)"), "  *)")
+        self.assertEqual(_strip_comments("(* // *)\nx"), " \nx")  # the (* *) pass runs before //
+        self.assertEqual(_strip_comments("(* /* *) */"), "  */")  # (* *) first: it takes the /* inside
+        self.assertEqual(_strip_comments("/* (* */ *)"), "/*  ")  # then /* */ finds nothing left to pair with
+        self.assertEqual(_strip_comments("// (* \n *)"), " ")  # so the (* *) span crosses the line end
+        self.assertEqual(_strip_comments("// x (* y\nz"), " \nz")  # an unclosed (* is left for the // pass
+        self.assertEqual(_strip_comments("{ // }\nz"), "{  \nz")  # { } runs last: // already took the }
+        self.assertEqual(_strip_comments("/* { */ }"), "  }")
 
 
 if __name__ == "__main__":

@@ -20,11 +20,53 @@ HEADER_FOR = {
 _FIRST_KW = re.compile(r"\b(PROGRAM|FUNCTION_BLOCK|FUNCTION|INTERFACE|METHOD|PROPERTY|TYPE|VAR_GLOBAL)\b", re.I)
 
 
+def _blank_spans(text: str, opener: str, closer: str) -> str:
+    """Replace each non-nested `opener ... closer` span by one space.
+
+    Single pass with str.find. The closer is searched after the opener's own characters, so
+    `(*)` is not a comment. An opener with no closer after it ends the scan: a later opener has
+    none either, and retrying from each one (as a lazy regex does) is quadratic.
+    """
+    parts: list[str] = []
+    pos = 0
+    while True:
+        start = text.find(opener, pos)
+        if start < 0:
+            break
+        end = text.find(closer, start + len(opener))
+        if end < 0:
+            break
+        parts.append(text[pos:start])
+        parts.append(" ")
+        pos = end + len(closer)
+    parts.append(text[pos:])
+    return "".join(parts)
+
+
+def _blank_line_comments(text: str) -> str:
+    """Replace each `//` up to, not including, the end of its line by one space."""
+    parts: list[str] = []
+    pos = 0
+    while True:
+        start = text.find("//", pos)
+        if start < 0:
+            break
+        end = text.find("\n", start + 2)
+        parts.append(text[pos:start])
+        parts.append(" ")
+        if end < 0:
+            pos = len(text)
+            break
+        pos = end
+    parts.append(text[pos:])
+    return "".join(parts)
+
+
 def _strip_comments(text: str) -> str:
-    text = re.sub(r"\(\*.*?\*\)", " ", text, flags=re.S)
-    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-    text = re.sub(r"//[^\n]*", " ", text)
-    return re.sub(r"\{[^}]*\}", " ", text)
+    text = _blank_spans(text, "(*", "*)")
+    text = _blank_spans(text, "/*", "*/")
+    text = _blank_line_comments(text)
+    return _blank_spans(text, "{", "}")
 
 
 def check_twincat(root: Node, path: Path | None = None) -> list[Finding]:
