@@ -188,6 +188,10 @@ class LogixL5xNestedRoutines(LinearTime):
                          + self.routine("b", self.rung(0, "OTE(x);")) + "</Routines></Program>")
         self.assertEqual(got, [("LX040", 1, "p")])
 
+    def test_a_double_coil_on_a_parenthesised_subscript_is_found(self):
+        two = self.routine("a", self.rung(0, "OTE(Arr[(i+1)]);") + self.rung(1, "OTE(Arr[(i+1)]);"))
+        self.assertEqual(self.check('<Program Name="p"><Routines>' + two + "</Routines></Program>"), [("LX040", 1, "p")])
+
     def test_a_routine_nested_without_a_routines_wrapper_keeps_its_rungs_with_the_routine_around_it(self):
         # Only a <Routines> is visited as a scope of its own; a bare <Routine> inside a routine is not.
         got = self.check('<Program Name="p"><Routines>' + self.routine("a", self.rung(0, "XIC(a);")

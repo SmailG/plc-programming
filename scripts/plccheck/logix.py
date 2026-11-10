@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_left
 from collections import Counter
+from itertools import tee, zip_longest
 
 from .findings import Finding, error, warning, with_context
 from .st import lint_st
@@ -35,9 +36,10 @@ def _instructions(t: str) -> list[tuple[str, int, str | None]]:
 
     The operands are the comma-separated parts, at bracket depth 0, between the instruction's
     parentheses; a missing `)` runs to the end of the text less its last character. The count is 0
-    when every part is blank. The first operand is "" when there is none, and None when it holds a
-    `(`: that is a nested instruction, not a tag, and keeping a copy of it for every instruction
-    around it would grow with the square of the nesting depth.
+    when every part is blank. The first operand is "" when there is none, and None when it holds
+    another instruction (a `NAME(`): that is a call, not a tag, and keeping a copy of it for every
+    instruction around it would grow with the square of the nesting depth. A bare `(` does not
+    count, so `Arr[(i+1)]` stays an operand.
 
     One pass over the text: parentheses matched with a stack, commas kept by bracket depth, and the
     operands of each instruction read from those, so no instruction rescans its own operand text.
@@ -68,7 +70,10 @@ def _instructions(t: str) -> list[tuple[str, int, str | None]]:
             chars += 1
     depth_before[n], text_before[n] = depth, chars
     found: list[tuple[str, int, str | None]] = []
-    for m in _INSTR.finditer(t):
+    # Each match is paired with the next. Matches do not overlap, so only the next one can lie inside this one's operands.
+    current, following = tee(_INSTR.finditer(t))
+    next(following, None)
+    for m, after in zip_longest(current, following):
         start = m.end()
         end = close.get(start - 1, n - 1)
         top = commas.get(depth_before[start], [])  # a comma at the depth the operands start at is a separator
@@ -78,7 +83,7 @@ def _instructions(t: str) -> list[tuple[str, int, str | None]]:
         first_operand: str | None = ""
         if has_operand:
             stop = top[first] if separators else end
-            first_operand = None if t.find("(", start, stop) >= 0 else t[start:stop].strip()
+            first_operand = None if after is not None and after.end() <= stop else t[start:stop].strip()
         found.append((m.group(1).upper(), separators + 1 if has_operand else 0, first_operand))
     return found
 

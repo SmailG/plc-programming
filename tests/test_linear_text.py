@@ -9,6 +9,7 @@ version must keep returning on legitimate input.
 from __future__ import annotations
 
 import sys
+import tracemalloc
 import unittest
 from pathlib import Path
 
@@ -256,11 +257,33 @@ class LogixRungOperands(LinearTime):
 
     def test_an_operand_holding_an_instruction_is_not_a_coil(self):
         # A copy of every enclosing operand grew with the square of the nesting depth (20 KB of
-        # `OTE(` held 40 MB of operands). An operand with a `(` is a nested call, not a tag.
+        # `OTE(` held 50 MB of operands). An operand that holds another `NAME(` is a call, not a tag.
         self.assertEqual(check_rung("OTE(OTE(a));", 1, "r")[1], ["a"])
-        self.assertEqual(check_rung("OTE((a));", 1, "r")[1], [])
+        self.assertEqual(check_rung("OTE(a(b),c);", 1, "r")[1], [])
+        self.assertEqual(check_rung("OTE(12XIC(a));", 1, "r")[1], [])
         self.assertEqual(check_rung("OTE(a, OTE(b));", 1, "r")[1], ["a", "b"])  # a first operand ends at its comma
+        self.assertEqual(check_rung("OTE(a(", 1, "r")[1], ["a"])  # the unclosed text drops its last character, the `(`
+        self.assertEqual(check_rung("OTE(a()", 1, "r")[1], [])  # here the dropped last character is a `)`: `a(` is inside
         self.assertEqual(check_rung("OTE(" * 400 + ")" * 400 + ";", 1, "r")[1], [])
+
+    def test_a_parenthesis_that_starts_no_instruction_keeps_the_operand(self):
+        # Whether Logix accepts a parenthesised subscript is not verified; the checker must not
+        # lose the double-coil warning for it (v0.2.1 kept these operands).
+        self.assertEqual(check_rung("OTE((a));", 1, "r")[1], ["(a)"])
+        self.assertEqual(check_rung("OTE(Arr[(i+1)]);", 1, "r")[1], ["Arr[(i+1)]"])
+        self.assertEqual(check_rung("OTE(Arr[(i+1)],b);", 1, "r")[1], ["Arr[(i+1)]"])
+
+    def test_memory_grows_linearly_with_the_nesting_depth(self):
+        # About 2 MB for 5000 nested `OTE(` (the lists indexed by character); the operand copies
+        # the rescan kept were 50 MB.
+        for text in ("OTE(" * 5_000, "OTE(" * 5_000 + ")" * 5_000 + ";"):
+            tracemalloc.start()
+            try:
+                check_rung(text, 1, "r")
+                peak = tracemalloc.get_traced_memory()[1]
+            finally:
+                tracemalloc.stop()
+            self.assertLess(peak, 10_000_000)
 
 
 if __name__ == "__main__":
