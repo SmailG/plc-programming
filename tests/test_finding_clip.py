@@ -66,8 +66,9 @@ class FindingClip(unittest.TestCase):
         self.assertTrue(f.message.endswith("gate its input instead"))
 
     def test_the_limit_is_well_above_the_messages_the_checkers_write(self):
-        # The longest message the tests produce is 195 characters (ST030 with two names), the longest
-        # template 183 before its two names; a limit near them would cut real findings.
+        # The longest message from an ordinary name is 203 characters (ST030 with a 17-character
+        # instance name, pinned above); the longest template is 183 before its two names. A limit
+        # near them would cut real findings.
         self.assertGreaterEqual(self.MAX, 300)
 
     def test_a_context_added_by_with_context_is_cut(self):
