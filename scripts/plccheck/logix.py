@@ -180,8 +180,7 @@ def check_l5k(text: str) -> list[Finding]:
                 open_words[kw] -= 1
             del stack[pos:]
             if closed[0] == "ST_ROUTINE" and st_lines:
-                src = "\n" * (st_lines[0][0] - 1) + "\n".join(t for _, t in st_lines)
-                f, _ = lint_st(src, "body")
+                f, _ = lint_st("\n".join(t for _, t in st_lines), "body", st_lines[0][0])
                 out.extend(with_context(f, "L5K ST routine"))
                 st_lines = []
     for kw, ln in stack:

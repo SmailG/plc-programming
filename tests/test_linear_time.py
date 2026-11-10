@@ -19,6 +19,7 @@ from plccheck.logix import check_l5k  # noqa: E402
 from plccheck.plcopen import check_iec61131_10  # noqa: E402
 from plccheck.schneider import check_control_expert  # noqa: E402
 from plccheck.simaticml import check_simatic_sd  # noqa: E402
+from plccheck.st import lint_st  # noqa: E402
 from plccheck.twincat import _blank_spans, _strip_comments  # noqa: E402
 from plccheck.xmlutil import parse_bytes  # noqa: E402
 
@@ -252,6 +253,33 @@ class LogixL5kBlockStack(LinearTime):
 
     def test_blocks_left_open_are_reported_at_the_end(self):
         self.assertEqual(self.errors("PROGRAM p\nROUTINE r\nEND_ROUTINE"), [(1, "PROGRAM opened here is never closed")])
+
+
+class LogixL5kStRoutineLines(LinearTime):
+    """An ST routine is linted from its own line, not behind a padding of one newline per file line before it."""
+
+    def test_lint_time_grows_linearly_with_the_number_of_routines(self):
+        # Routine k used to be padded with about 3k newlines, so n routines cost n^2 characters:
+        # quadratic in the file size (about 16x for 4x).
+        def make(n):
+            text = "ST_ROUTINE r\n'a := 1;\nEND_ST_ROUTINE\n" * n
+            return lambda: check_l5k(text)
+        self.assert_linear(make, 700, 2_800)
+
+    def test_findings_name_file_lines_in_their_position_and_their_message(self):
+        text = "PROGRAM p\nROUTINE r\nEND_ROUTINE\nST_ROUTINE s\n'IF a THEN\n'x := 1;\nEND_ST_ROUTINE\n" \
+               "ST_ROUTINE t\n'(* open\nEND_ST_ROUTINE\nEND_PROGRAM"
+        got = [(f.code, f.line, f.message, f.context) for f in check_l5k(text)]
+        self.assertEqual(got, [
+            ("ST002", 5, "IF opened at line 5 is never closed", "L5K ST routine"),
+            ("ST001", 9, "unterminated comment opened with '(*'", "L5K ST routine"),
+        ])
+
+    def test_lint_st_numbers_lines_from_first_line(self):
+        findings, _ = lint_st("x := 1;\nIF a THEN", "body", 10)
+        self.assertEqual([(f.line, f.message) for f in findings], [(11, "IF opened at line 11 is never closed")])
+        findings, _ = lint_st("x := 1;\nIF a THEN", "body")
+        self.assertEqual([(f.line, f.message) for f in findings], [(2, "IF opened at line 2 is never closed")])
 
 
 class SimaticSdBlockStack(LinearTime):

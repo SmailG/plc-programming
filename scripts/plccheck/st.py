@@ -110,10 +110,10 @@ class StAnalysis:
         )
 
 
-def tokenize(src: str) -> tuple[list[Tok], list[Finding]]:
+def tokenize(src: str, first_line: int = 1) -> tuple[list[Tok], list[Finding]]:
     toks: list[Tok] = []
     findings: list[Finding] = []
-    i, n, line = 0, len(src), 1
+    i, n, line = 0, len(src), first_line
     while i < n:
         c = src[i]
         if c == "\n":
@@ -315,8 +315,10 @@ def _designator_then_eq(stmt: list[Tok]) -> bool:
     return i < len(stmt) and _is_op(stmt[i], "=")
 
 
-def lint_st(src: str, mode: str = "file") -> tuple[list[Finding], StAnalysis]:
-    toks, findings = tokenize(src)
+def lint_st(src: str, mode: str = "file", first_line: int = 1) -> tuple[list[Finding], StAnalysis]:
+    """Lint ST text. `first_line` is the file line of its first line, for text taken from the
+    middle of a file: every line number in a finding, message text included, then names a file line."""
+    toks, findings = tokenize(src, first_line)
     an = StAnalysis()
     root = _Frame("<root>", 0, scope={}, body=(mode != "declaration"))
     root.owner = root
