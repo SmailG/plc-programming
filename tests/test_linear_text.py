@@ -23,6 +23,7 @@ from plccheck.logix import check_l5k, check_rung  # noqa: E402
 from plccheck.simaticml import check_simatic_sd  # noqa: E402
 from plccheck.st import lint_st  # noqa: E402
 
+
 class TwinCatCommentStripping(LinearTime):
     """Comment stripping scans once; an opener that never closes must not rescan the rest of the text."""
 
