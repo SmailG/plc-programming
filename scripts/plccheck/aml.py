@@ -72,7 +72,8 @@ def check_aml(root: Node, path: Path | None = None) -> list[Finding]:
             continue
         if not target.exists():
             out.append(warning("AM011", f"refURI target {target.name} not found next to this file", value.line))
-        elif fragment and cls.endswith("PLCopenXMLInterface"):
+        elif fragment and cls.endswith("PLCopenXMLInterface") and target.is_file():
+            # An absolute refURI can name a directory, FIFO or device; only a regular file is read.
             try:
                 doc = parse_file(target)
             except XmlError:

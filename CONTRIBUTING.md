@@ -28,8 +28,9 @@ privately, as described in [SECURITY.md](SECURITY.md). Pull requests use the tem
   ask the user rather than assume.
 - **The hook must never break a session:** non-PLC files and unreadable events exit 0, and a
   validator bug exits 1, which Claude Code shows but does not block on. Only real errors exit 2.
-- **Bump the version** in `.claude-plugin/plugin.json` on every change; `claude plugin update`
-  does nothing while it is unchanged.
+- **Bump the version** in both `.claude-plugin/plugin.json` and the root `plugin.json` on every
+  change, to the same value (a test checks it); `claude plugin update` does nothing while it is
+  unchanged.
 - Do not bundle vendor schemas or manuals whose licence does not clearly permit redistribution.
 - **Test fixtures for the `.project` reader are synthetic.** Never commit a real `.project`,
   or names, text or guids taken from one: it is someone's program.
@@ -44,3 +45,10 @@ claude plugin eval . --trust-plugin --allow-tools Write Edit "Bash(python3 *)" -
 
 Read an eval's `Δ` (with plugin minus without), not its score: a case the baseline already
 passes shows nothing about the plugin. See the README for the macOS eval workaround.
+
+### Mutation tests
+
+Run mutation tests (by hand or with an AI agent) one at a time, each as
+`timeout -k 10 300 <cmd>`: an external wrapper, because a timeout inside the runner dies with
+it. That is GNU `timeout` (macOS: `brew install coreutils`, then `gtimeout`). Check for
+leftover processes at the end: `ps -eo pid,etime,pcpu,command | grep <your scratch path>`.

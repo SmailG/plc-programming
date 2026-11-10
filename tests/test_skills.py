@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import unittest
@@ -95,6 +96,14 @@ class ExamplesLintClean(unittest.TestCase):
                 with self.subTest(block=f"{md.relative_to(ROOT)}:{line}"):
                     self.assertEqual([f"{f.code} l{f.line}: {f.message}" for f in findings], [])
         self.assertGreater(blocks, 10, "no iecst blocks found; the fence pattern is wrong")
+
+
+class PluginManifests(unittest.TestCase):
+    def test_both_manifests_carry_the_same_version(self):
+        versions = {str(rel): json.loads((ROOT / rel).read_text(encoding="utf-8"))["version"]
+                    for rel in (Path("plugin.json"), Path(".claude-plugin") / "plugin.json")}
+        self.assertEqual(len(versions), 2)
+        self.assertEqual(len(set(versions.values())), 1, versions)
 
 
 class CrossReferences(unittest.TestCase):

@@ -1,7 +1,10 @@
 """Minimal namespace-aware XML tree with line numbers (expat, stdlib only).
 
 ElementTree drops line numbers, and a finding without a line is half as useful.
-External entities and DTDs are never fetched.
+External entities and DTDs are never fetched, and entity declarations are refused. Because
+entity declarations precede the root element, the format sniffer stops at the first one too:
+a file that declares an entity is not detected as any format, so the edit-time hook skips it,
+and validating it with an explicit format reports XML001.
 """
 
 from __future__ import annotations
@@ -55,6 +58,10 @@ class Node:
         return self.text + "".join(c.all_text() for c in self.children)
 
 
+class _EntityDeclared(Exception):
+    """Raised inside sniff_root's parser at the first entity declaration."""
+
+
 class XmlError(Exception):
     def __init__(self, message: str, line: int | None):
         super().__init__(message)
@@ -66,6 +73,7 @@ def parse_bytes(data: bytes) -> Node:
     parser.SetParamEntityParsing(xml.parsers.expat.XML_PARAM_ENTITY_PARSING_NEVER)
     root: list[Node] = []
     stack: list[Node] = []
+    chunks: list[list[str]] = []  # character data of each open element, joined once at its end
 
     def split(name: str) -> tuple[str, str]:
         if "}" in name:
@@ -81,20 +89,26 @@ def parse_bytes(data: bytes) -> Node:
         else:
             root.append(node)
         stack.append(node)
+        chunks.append([])
 
     def end(_name):
-        stack.pop()
+        node = stack.pop()
+        node.text = "".join(chunks.pop())
 
     def chars(data):
         if stack:
-            node = stack[-1]
-            if not node.text:
-                node.text_line = parser.CurrentLineNumber
-            node.text += data
+            if not chunks[-1]:
+                stack[-1].text_line = parser.CurrentLineNumber
+            chunks[-1].append(data)
+
+    def entity_decl(*_args):
+        # Expanding entities makes the work grow with the nesting, not the file size.
+        raise XmlError("XML entity declarations are not supported", parser.CurrentLineNumber)
 
     parser.StartElementHandler = start
     parser.EndElementHandler = end
     parser.CharacterDataHandler = chars
+    parser.EntityDeclHandler = entity_decl
     try:
         parser.Parse(data, True)
     except xml.parsers.expat.ExpatError as exc:
@@ -109,7 +123,13 @@ def parse_file(path: Path) -> Node:
 
 
 def sniff_root(path: Path) -> tuple[str, str] | None:
-    """(namespace, local name) of the root element, or None if it is not XML."""
+    """(namespace, local name) of the root element, or None if it is not XML.
+
+    A document that declares an entity gives ("", ""), which matches no format: the declaration
+    comes before the root, so the parser stops before any entity is expanded (a root attribute
+    or an ATTLIST default could otherwise expand to megabytes). None would read as broken XML,
+    and the hook would then block edits to ordinary non-PLC .xml files that declare entities.
+    """
     try:
         head = path.read_bytes()[:4096]
     except OSError:
@@ -124,11 +144,17 @@ def sniff_root(path: Path) -> tuple[str, str] | None:
         found.append(name)
         raise StopIteration
 
+    def entity_decl(*_args):
+        raise _EntityDeclared
+
     parser.StartElementHandler = start
+    parser.EntityDeclHandler = entity_decl
     try:
         parser.Parse(head, False)
     except StopIteration:
         pass
+    except _EntityDeclared:
+        return "", ""
     except xml.parsers.expat.ExpatError:
         return None
     if not found:
