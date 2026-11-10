@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from .findings import Finding, error, warning, with_context
 from .st import lint_st
@@ -147,6 +148,7 @@ def check_l5k(text: str) -> list[Finding]:
     rungs are `N: neutral text;`; ST routine lines start with a single quote."""
     out: list[Finding] = []
     stack: list[tuple[str, int]] = []
+    open_words: Counter[str] = Counter()  # open frames per keyword, so "is X open" is not a stack scan
     ends = set(re.findall(r"\bEND_([A-Z][A-Z0-9_]*)\b", text))
     st_lines: list[tuple[int, str]] = []
     for lineno, raw in enumerate(text.splitlines(), 1):
@@ -165,14 +167,17 @@ def check_l5k(text: str) -> list[Finding]:
             if not end:
                 if word in L5K_BLOCKS or word in ends:
                     stack.append((word, lineno))
+                    open_words[word] += 1
                 continue
-            pos = next((k for k in range(len(stack) - 1, -1, -1) if stack[k][0] == word), None)
-            if pos is None:
+            if not open_words[word]:  # else the scan would walk the whole stack to find nothing
                 out.append(error("LX050", f"END_{word} without an open {word}", lineno))
                 continue
+            pos = next(k for k in range(len(stack) - 1, -1, -1) if stack[k][0] == word)
             for kw, ln in stack[pos + 1:]:
                 out.append(error("LX050", f"{kw} opened at line {ln} is not closed before END_{word}", ln))
             closed = stack[pos]
+            for kw, _ in stack[pos:]:
+                open_words[kw] -= 1
             del stack[pos:]
             if closed[0] == "ST_ROUTINE" and st_lines:
                 src = "\n" * (st_lines[0][0] - 1) + "\n".join(t for _, t in st_lines)
