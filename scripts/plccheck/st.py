@@ -18,6 +18,7 @@ Modes:
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .findings import Finding, error, warning
@@ -109,10 +110,10 @@ class StAnalysis:
         )
 
 
-def tokenize(src: str) -> tuple[list[Tok], list[Finding]]:
+def tokenize(src: str, first_line: int) -> tuple[list[Tok], list[Finding]]:
     toks: list[Tok] = []
     findings: list[Finding] = []
-    i, n, line = 0, len(src), 1
+    i, n, line = 0, len(src), first_line
     while i < n:
         c = src[i]
         if c == "\n":
@@ -242,6 +243,7 @@ class _Frame:
     line: int
     scope: dict[str, int] | None = None  # declared names, for scope openers
     body: bool = False  # statements allowed at this level
+    owner: "_Frame | None" = field(default=None, repr=False, compare=False)  # nearest scope frame at or below this one
 
 
 def _is_zero(t: Tok) -> bool:
@@ -313,20 +315,31 @@ def _designator_then_eq(stmt: list[Tok]) -> bool:
     return i < len(stmt) and _is_op(stmt[i], "=")
 
 
-def lint_st(src: str, mode: str = "file") -> tuple[list[Finding], StAnalysis]:
-    toks, findings = tokenize(src)
+def lint_st(src: str, mode: str = "file", first_line: int = 1) -> tuple[list[Finding], StAnalysis]:
+    """Lint ST text. `first_line` is the file line of its first line, for text taken from the
+    middle of a file: every line number in a finding, message text included, then names a file line."""
+    toks, findings = tokenize(src, first_line)
     an = StAnalysis()
     root = _Frame("<root>", 0, scope={}, body=(mode != "declaration"))
+    root.owner = root
     stack: list[_Frame] = [root]
+    open_kw: Counter[str] = Counter()  # open frames per keyword, so "is any X open" is not a stack scan
     pending: tuple[str, str, int] | None = None  # (awaited keyword, opener, line)
     stmt: list[Tok] = []
     paren = 0
 
+    def push(fr: _Frame) -> None:
+        fr.owner = fr if fr.scope is not None else stack[-1].owner
+        stack.append(fr)
+        open_kw[fr.kw] += 1
+
+    def is_open(kinds: set[str]) -> bool:
+        return any(open_kw[k] for k in kinds)
+
     def scope_frame() -> _Frame:
-        for fr in reversed(stack):
-            if fr.scope is not None:
-                return fr
-        return root
+        owner = stack[-1].owner
+        assert owner is not None
+        return owner
 
     def in_decl() -> bool:
         return stack[-1].kw in DECL_OPENERS
@@ -415,8 +428,8 @@ def lint_st(src: str, mode: str = "file") -> tuple[list[Finding], StAnalysis]:
                 an.has_body = True
                 name = t.text.lstrip("#").upper()
                 nxt = toks[idx + 1] if idx + 1 < len(toks) else None
-                conditional = any(fr.kw in CONDITIONALS for fr in stack)
-                in_loop = any(fr.kw in LOOPS for fr in stack)
+                conditional = is_open(CONDITIONALS)
+                in_loop = is_open(LOOPS)
                 if not t.member:
                     if _is_op(nxt, "("):
                         an.calls.append((name, t.line, conditional, in_loop))
@@ -459,7 +472,7 @@ def lint_st(src: str, mode: str = "file") -> tuple[list[Finding], StAnalysis]:
                         k += 1
                     if k < len(toks) and toks[k].kind in ("word", "dstr"):
                         an.header = (kw, toks[k].text.strip('"'))
-            stack.append(fr)
+            push(fr)
             stmt = []
             continue
 
@@ -480,7 +493,7 @@ def lint_st(src: str, mode: str = "file") -> tuple[list[Finding], StAnalysis]:
             stmt = [t]
             continue
         if kw in ("EXIT", "CONTINUE"):
-            if not any(fr.kw in LOOPS for fr in stack):
+            if not is_open(LOOPS):
                 findings.append(error("ST005", f"{kw} outside FOR/WHILE/REPEAT", t.line))
             stmt.append(t)
             continue
@@ -491,13 +504,17 @@ def lint_st(src: str, mode: str = "file") -> tuple[list[Finding], StAnalysis]:
 
         if kw in CLOSERS:
             expected = CLOSERS[kw]
-            pos = next((k for k in range(len(stack) - 1, 0, -1) if stack[k].kw in expected), None)
+            pos = None
+            if is_open(expected):  # else the scan would walk the whole stack to find nothing
+                pos = next((k for k in range(len(stack) - 1, 0, -1) if stack[k].kw in expected), None)
             if pos is None:
                 findings.append(error("ST002", f"{kw} without a matching {'/'.join(sorted(expected))}", t.line))
             else:
                 for fr in stack[pos + 1:]:
                     findings.append(error("ST002", f"{fr.kw} opened at line {fr.line} is not closed before {kw}", fr.line))
                 closed = stack[pos]
+                for fr in stack[pos:]:
+                    open_kw[fr.kw] -= 1
                 del stack[pos:]
                 if closed.kw in VAR_KINDS:
                     scope_frame().body = True

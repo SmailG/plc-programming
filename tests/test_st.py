@@ -192,6 +192,62 @@ class ScanCallTests(unittest.TestCase):
         self.assertEqual(codes(scan_call_findings([an1, an2])), ["ST030"])
 
 
+class OpenBlockStateTests(unittest.TestCase):
+    """What the open-block bookkeeping answers: conditional, in a loop, in a loop at all, which scope."""
+
+    def prog(self, body: str) -> str:
+        return ("PROGRAM P\nVAR\n tonA : TON;\n rtB : R_TRIG;\n x : BOOL;\n i : INT;\nEND_VAR\nrtB(CLK := x);\n"
+                + body + "\nEND_PROGRAM\n")
+
+    def test_timer_after_end_if_is_unconditional(self):
+        self.assertEqual(codes(check_st_file(self.prog("IF x THEN i := 1; END_IF;\ntonA(IN := x, PT := T#1S);"))), [])
+
+    def test_timer_in_for_inside_if_is_conditional_and_in_loop(self):
+        f = check_st_file(self.prog("IF x THEN FOR i := 1 TO 3 DO tonA(IN := x, PT := T#1S); END_FOR; END_IF;"))
+        self.assertEqual(codes(f), ["ST030", "ST032"])
+
+    def test_timer_after_end_for_inside_if_is_conditional_but_not_in_loop(self):
+        f = check_st_file(self.prog("IF x THEN FOR i := 1 TO 3 DO i := i; END_FOR; tonA(IN := x, PT := T#1S); END_IF;"))
+        self.assertEqual(codes(f), ["ST030"])
+
+    def test_timer_inside_case_is_conditional(self):
+        self.assertEqual(codes(check_st_file(self.prog("CASE i OF 1: tonA(IN := x, PT := T#1S); END_CASE;"))), ["ST030"])
+
+    def test_exit_inside_repeat_is_inside_a_loop(self):
+        self.assertEqual(codes(check_st_file("REPEAT EXIT; UNTIL x END_REPEAT;\n")), [])
+
+    def test_timer_after_closer_that_discards_an_open_if_is_unconditional(self):
+        f = check_st_file(self.prog("FOR i := 1 TO 3 DO IF x THEN END_FOR;\ntonA(IN := x, PT := T#1S);"))
+        self.assertEqual(codes(f), ["ST002"])
+        self.assertIn("IF opened", f[0].message)
+
+    def test_exit_after_the_loop_closed_is_outside_a_loop(self):
+        f = check_st_file("WHILE a DO x := 1; END_WHILE;\nEXIT;\n")
+        self.assertEqual(codes(f), ["ST005"])
+        self.assertEqual(f[0].line, 2)
+
+    def test_exit_after_closer_that_discards_an_open_loop_is_outside_a_loop(self):
+        f = check_st_file("IF a THEN WHILE b DO END_IF;\nEXIT;\n")
+        self.assertEqual(codes(f), ["ST002", "ST005"])
+
+    def test_closer_of_another_kind_matches_nothing_and_keeps_the_stack(self):
+        f = check_st_file("IF a THEN END_FOR; x := 1; END_IF;\n")
+        self.assertEqual(codes(f), ["ST002"])
+        self.assertIn("END_FOR without a matching FOR", f[0].message)
+
+    def test_closer_finds_its_opener_under_other_open_blocks(self):
+        self.assertEqual(codes(check_st_file("WHILE a DO IF b THEN CASE c OF 1: EXIT; END_CASE; END_IF; END_WHILE;\n")), [])
+
+    def test_scope_follows_the_nearest_pou_through_nested_blocks_and_closers(self):
+        src = ("FUNCTION_BLOCK F\nVAR a : INT; END_VAR\n"
+               "METHOD M\nVAR a : INT; END_VAR\n"  # own scope: not a duplicate of F's a
+               "IF a THEN IF a THEN IF a THEN x = 1; END_IF; END_IF; END_IF;\n"  # body seen 3 blocks deep: ST010
+               "END_METHOD\n"
+               "VAR a : INT; END_VAR\n"  # back in F's scope: duplicate
+               "END_FUNCTION_BLOCK\n")
+        self.assertEqual(codes(check_st_file(src)), ["ST010", "ST040"])
+
+
 class DialectTests(unittest.TestCase):
     def test_siemens_scl_source(self):
         src = '''FUNCTION_BLOCK "FB_Conveyor"

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
+from collections import Counter
+from itertools import tee, zip_longest
 
 from .findings import Finding, error, warning, with_context
 from .st import lint_st
@@ -23,23 +26,66 @@ ARITY = {
     "JMP": 1, "LBL": 1, "AFI": 0, "NOP": 0, "TND": 0, "MCR": 0, "UID": 0, "UIE": 0,
     "GSV": 4, "SSV": 4, "MSG": 1, "PSC": 0, "PCMD": 3,
 }
-_INSTR = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\(")
+# `NAME(`, found at the start of an identifier run (leading digits skipped). Without the lookbehind every
+# position of a long run would rescan it for a `(`.
+_INSTR = re.compile(r"(?<![A-Za-z0-9_])[0-9]*([A-Za-z_][A-Za-z0-9_]*)\(")
 
 
-def _split_operands(s: str) -> list[str]:
-    parts, depth, cur = [], 0, ""
-    for ch in s:
-        if ch in "([":
+def _instructions(t: str) -> list[tuple[str, int, str | None]]:
+    """(mnemonic, operand count, first operand) for each `NAME(` in the neutral text, in order.
+
+    The operands are the comma-separated parts, at bracket depth 0, between the instruction's
+    parentheses; a missing `)` runs to the end of the text less its last character. The count is 0
+    when every part is blank. The first operand is "" when there is none, and None when it holds
+    another instruction (a `NAME(`): that is a call, not a tag, and keeping a copy of it for every
+    instruction around it would grow with the square of the nesting depth. A bare `(` does not
+    count, so `Arr[(i+1)]` stays an operand.
+
+    One pass over the text: parentheses matched with a stack, commas kept by bracket depth, and the
+    operands of each instruction read from those, so no instruction rescans its own operand text.
+    """
+    n = len(t)
+    depth_before = [0] * (n + 1)  # bracket depth ( [ ) ] before each character
+    text_before = [0] * (n + 1)  # non-whitespace characters before each character
+    close: dict[int, int] = {}  # index of each `(` -> index of its `)`
+    commas: dict[int, list[int]] = {}  # bracket depth -> indexes of the commas at that depth
+    opened: list[int] = []
+    depth = chars = 0
+    for k, ch in enumerate(t):
+        depth_before[k], text_before[k] = depth, chars
+        if ch == ",":
+            commas.setdefault(depth, []).append(k)
+        elif ch == "(":
+            opened.append(k)
             depth += 1
-        elif ch in ")]":
+        elif ch == ")":
+            if opened:
+                close[opened.pop()] = k
             depth -= 1
-        if ch == "," and depth == 0:
-            parts.append(cur)
-            cur = ""
-        else:
-            cur += ch
-    parts.append(cur)
-    return [p.strip() for p in parts] if any(p.strip() for p in parts) else []
+        elif ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        if not ch.isspace():
+            chars += 1
+    depth_before[n], text_before[n] = depth, chars
+    found: list[tuple[str, int, str | None]] = []
+    # Each match is paired with the next. Matches do not overlap, so only the next one can lie inside this one's operands.
+    current, following = tee(_INSTR.finditer(t))
+    next(following, None)
+    for m, after in zip_longest(current, following):
+        start = m.end()
+        end = close.get(start - 1, n - 1)
+        top = commas.get(depth_before[start], [])  # a comma at the depth the operands start at is a separator
+        first, last = bisect_left(top, start), bisect_left(top, end)
+        separators = max(last - first, 0)
+        has_operand = end > start and text_before[end] - text_before[start] > separators
+        first_operand: str | None = ""
+        if has_operand:
+            stop = top[first] if separators else end
+            first_operand = None if after is not None and after.end() <= stop else t[start:stop].strip()
+        found.append((m.group(1).upper(), separators + 1 if has_operand else 0, first_operand))
+    return found
 
 
 def check_rung(text: str, line: int, ctx: str) -> tuple[list[Finding], list[str]]:
@@ -69,18 +115,27 @@ def check_rung(text: str, line: int, ctx: str) -> tuple[list[Finding], list[str]
     if bracket:
         out.append(error("LX021", "unbalanced branch brackets", line, ctx))
     otes: list[str] = []
-    for m in _INSTR.finditer(t):
-        start, depth, i = m.end(), 1, m.end()
-        while i < len(t) and depth:
-            depth += {"(": 1, ")": -1}.get(t[i], 0)
-            i += 1
-        ops = _split_operands(t[start:i - 1])
-        mnem = m.group(1).upper()
-        if mnem in ARITY and len(ops) != ARITY[mnem]:
-            out.append(warning("LX022", f"{mnem} takes {ARITY[mnem]} operand(s), found {len(ops)}", line, ctx))
-        if mnem == "OTE" and ops:
-            otes.append(ops[0])
+    for mnem, count, first_operand in _instructions(t):
+        if mnem in ARITY and count != ARITY[mnem]:
+            out.append(warning("LX022", f"{mnem} takes {ARITY[mnem]} operand(s), found {count}", line, ctx))
+        if mnem == "OTE" and count and first_operand is not None:
+            otes.append(first_operand)
     return out, otes
+
+
+def _own_rungs(routine: Node):
+    """Rung elements of this routine in document order, not descending into a nested <Routines>.
+
+    A nested <Routines> is visited by the caller as a scope of its own. Iterating the whole subtree
+    per routine would check a nested rung once for every routine around it.
+    """
+    stack = list(reversed(routine.children))
+    while stack:
+        node = stack.pop()
+        if node.tag == "Rung":
+            yield node
+        if node.tag != "Routines":
+            stack.extend(reversed(node.children))
 
 
 def check_l5x(root: Node) -> list[Finding]:
@@ -115,7 +170,7 @@ def check_l5x(root: Node) -> list[Finding]:
             if rtype not in ROUTINE_TYPES:
                 out.append(warning("LX010", f"unknown routine Type '{rtype}'", r.line, ctx))
             if rtype == "RLL":
-                for rung in r.iter("Rung"):
+                for rung in _own_rungs(r):
                     text_node = rung.find("Text")
                     if text_node is None:
                         continue
@@ -147,6 +202,7 @@ def check_l5k(text: str) -> list[Finding]:
     rungs are `N: neutral text;`; ST routine lines start with a single quote."""
     out: list[Finding] = []
     stack: list[tuple[str, int]] = []
+    open_words: Counter[str] = Counter()  # open frames per keyword, so "is X open" is not a stack scan
     ends = set(re.findall(r"\bEND_([A-Z][A-Z0-9_]*)\b", text))
     st_lines: list[tuple[int, str]] = []
     for lineno, raw in enumerate(text.splitlines(), 1):
@@ -165,18 +221,20 @@ def check_l5k(text: str) -> list[Finding]:
             if not end:
                 if word in L5K_BLOCKS or word in ends:
                     stack.append((word, lineno))
+                    open_words[word] += 1
                 continue
-            pos = next((k for k in range(len(stack) - 1, -1, -1) if stack[k][0] == word), None)
-            if pos is None:
+            if not open_words[word]:  # else the scan would walk the whole stack to find nothing
                 out.append(error("LX050", f"END_{word} without an open {word}", lineno))
                 continue
+            pos = next(k for k in range(len(stack) - 1, -1, -1) if stack[k][0] == word)
             for kw, ln in stack[pos + 1:]:
                 out.append(error("LX050", f"{kw} opened at line {ln} is not closed before END_{word}", ln))
             closed = stack[pos]
+            for kw, _ in stack[pos:]:
+                open_words[kw] -= 1
             del stack[pos:]
             if closed[0] == "ST_ROUTINE" and st_lines:
-                src = "\n" * (st_lines[0][0] - 1) + "\n".join(t for _, t in st_lines)
-                f, _ = lint_st(src, "body")
+                f, _ = lint_st("\n".join(t for _, t in st_lines), "body", st_lines[0][0])
                 out.extend(with_context(f, "L5K ST routine"))
                 st_lines = []
     for kw, ln in stack:

@@ -21,6 +21,23 @@ def _resolve(ref: str, base: Path) -> tuple[Path | None, str]:
     return (base / p) if p else None, u.fragment
 
 
+def _global_ids(target: Path, cache: dict[Path, set[str] | None]) -> set[str] | None:
+    """The globalId and uuid values of a referenced PLCopen file, or None if it is not well-formed XML.
+
+    Parsed once per file: every interface that links to the same file would otherwise parse and walk
+    it again, so a file of n links to itself costs n parses of an n-link document.
+    """
+    key = target.resolve()  # `x.xml`, `./x.xml` and `a/../x.xml` are one file
+    if key not in cache:
+        try:
+            doc = parse_file(target)
+        except XmlError:
+            cache[key] = None
+        else:
+            cache[key] = {v for n in doc.iter() for v in (n.get("globalId"), n.get("uuid")) if v is not None}
+    return cache[key]
+
+
 def check_aml(root: Node, path: Path | None = None) -> list[Finding]:
     out: list[Finding] = []
     if root.tag != "CAEXFile":
@@ -56,6 +73,7 @@ def check_aml(root: Node, path: Path | None = None) -> list[Finding]:
                 out.append(warning("AM005", f"InternalLink {side} '{ref}' matches no interface ID in this file", link.line))
 
     base = path.parent if path is not None else None
+    plcopen_ids: dict[Path, set[str] | None] = {}
     for iface in root.iter("ExternalInterface"):
         cls = iface.get("RefBaseClassPath") or ""
         if not any(cls.endswith(c) for c in DATA_CONNECTORS):
@@ -74,11 +92,8 @@ def check_aml(root: Node, path: Path | None = None) -> list[Finding]:
             out.append(warning("AM011", f"refURI target {target.name} not found next to this file", value.line))
         elif fragment and cls.endswith("PLCopenXMLInterface") and target.is_file():
             # An absolute refURI can name a directory, FIFO or device; only a regular file is read.
-            try:
-                doc = parse_file(target)
-            except XmlError:
-                continue
-            if not any(n.get("globalId") == fragment or n.get("uuid") == fragment for n in doc.iter()):
+            ids = _global_ids(target, plcopen_ids)
+            if ids is not None and fragment not in ids:
                 out.append(warning("AM012", f"refURI fragment #{fragment} matches no globalId in {target.name}", value.line))
     for ext in root.findall("ExternalReference"):
         if base is not None and ext.get("Path") and not (base / ext.get("Path")).exists():

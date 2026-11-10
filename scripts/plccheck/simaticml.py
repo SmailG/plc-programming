@@ -8,6 +8,7 @@ does not expect, so a mismatch is the most expensive mistake in generated Simati
 from __future__ import annotations
 
 import re
+from collections import Counter
 
 from .findings import Finding, error, warning
 from .xmlutil import Node
@@ -100,7 +101,7 @@ def _check_block(block: Node) -> list[Finding]:
         iface = attrs.find("Interface")
         if iface is not None:
             out.extend(_check_interface(block.tag, iface, ctx))
-    for cu in block.iter("SW.Blocks.CompileUnit"):
+    for cu in block.iter(COMPILE_UNIT):
         out.extend(_check_compile_unit(cu, ctx))
     return out
 
@@ -140,22 +141,37 @@ def _check_interface(kind: str, iface: Node, ctx: str) -> list[Finding]:
 
 
 PAYLOAD_ROOTS = ("FlgNet", "StructuredText", "StatementList", "Graph")
+COMPILE_UNIT = "SW.Blocks.CompileUnit"
+
+
+def _own_scopes(cu: Node) -> list[Node]:
+    """Payload roots in this CompileUnit, in document order, not inside a nested CompileUnit.
+
+    A nested CompileUnit is visited by the caller as a unit of its own. Iterating the whole subtree
+    per unit would lint a payload once for every CompileUnit around it.
+    """
+    scopes: list[Node] = []
+    stack = list(reversed(cu.children))
+    while stack:
+        node = stack.pop()
+        if node.tag == COMPILE_UNIT:
+            continue
+        if node.tag in PAYLOAD_ROOTS:
+            scopes.append(node)
+        stack.extend(reversed(node.children))
+    return scopes
 
 
 def _check_compile_unit(cu: Node, ctx: str) -> list[Finding]:
     """UIds are unique per network payload; GRAPH nests one FlgNet per condition, each its own scope."""
     out: list[Finding] = []
-    scopes: dict[int, Node] = {}
-    for node in cu.iter():
-        if node.tag in PAYLOAD_ROOTS:
-            scopes[id(node)] = node
-    for scope in scopes.values():
+    for scope in _own_scopes(cu):
         nodes = []
         stack = list(scope.children)
-        while stack:  # stop at nested payload roots: they are separate scopes
+        while stack:  # stop at nested payload roots and compile units: they are separate scopes
             n = stack.pop()
             nodes.append(n)
-            if n.tag not in PAYLOAD_ROOTS:
+            if n.tag not in PAYLOAD_ROOTS and n.tag != COMPILE_UNIT:
                 stack.extend(n.children)
         uids: dict[str, int] = {}
         wires: set[str] = set()
@@ -179,6 +195,7 @@ def check_simatic_sd(text: str) -> list[Finding]:
     """SIMATIC SD (.s7dcl): only NETWORK/RUNG nesting and brace balance are checked."""
     out: list[Finding] = []
     stack: list[tuple[str, int]] = []
+    open_words: Counter[str] = Counter()  # open frames per keyword, so "is X open" is not a stack scan
     depth = 0
     for lineno, raw in enumerate(text.splitlines(), 1):
         line = re.sub(r"//.*$", "", raw)
@@ -187,14 +204,17 @@ def check_simatic_sd(text: str) -> list[Finding]:
         for word in re.findall(r"\b(END_NETWORK|END_RUNG|NETWORK|RUNG)\b", line):
             if word in ("NETWORK", "RUNG"):
                 stack.append((word, lineno))
+                open_words[word] += 1
                 continue
             opener = word[4:]
-            pos = next((k for k in range(len(stack) - 1, -1, -1) if stack[k][0] == opener), None)
-            if pos is None:
+            if not open_words[opener]:  # else the scan would walk the whole stack to find nothing
                 out.append(error("SD001", f"{word} without matching {opener}", lineno))
                 continue
+            pos = next(k for k in range(len(stack) - 1, -1, -1) if stack[k][0] == opener)
             for inner, ln in stack[pos + 1:]:
                 out.append(error("SD001", f"{inner} opened at line {ln} is not closed before {word}", ln))
+            for kw, _ in stack[pos:]:
+                open_words[kw] -= 1
             del stack[pos:]
     for word, lineno in stack:
         out.append(error("SD001", f"{word} opened here is never closed", lineno))
