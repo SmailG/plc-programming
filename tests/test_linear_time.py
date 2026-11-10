@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 
 from plccheck import aml  # noqa: E402
-from plccheck.logix import check_l5k, check_l5x  # noqa: E402
+from plccheck.logix import check_l5k, check_l5x, check_rung  # noqa: E402
 from plccheck.plcopen import check_iec61131_10  # noqa: E402
 from plccheck.schneider import check_control_expert  # noqa: E402
 from plccheck.simaticml import check_simaticml, check_simatic_sd  # noqa: E402
@@ -507,6 +507,67 @@ class AmlLinkedFileParsing(LinearTime):
             ]), encoding="utf-8")
             got = aml.check_aml(parse_bytes((base / "plant.aml").read_bytes()), base / "plant.aml")
         self.assertEqual((parse.call_count, got), (0, []))
+
+
+class LogixRungOperands(LinearTime):
+    """Operands of every instruction are read in one pass, not by rescanning from each `NAME(`."""
+
+    # (text for n, small n, big n). Nested and unclosed instructions rescanned the rest of the rung
+    # per `(`; a long identifier rescanned its run from every character; sequential instructions with
+    # commas must not search all commas at their depth.
+    INPUTS = {
+        "n nested instructions": (lambda n: "XIC(" * n + ")" * n + ";", 300, 1_200),
+        "n unclosed instructions": (lambda n: "XIC(" * n + ";", 300, 1_200),
+        "one identifier of n characters": (lambda n: "a" * n + ";", 2_500, 10_000),
+        "n sequential instructions with commas": (lambda n: "XIC(a,b)" * n + ";", 3_000, 12_000),
+    }
+
+    def warnings(self, text: str) -> list[str]:
+        return [f.message for f in check_rung(text, 1, "r")[0] if f.code == "LX022"]
+
+    def test_check_time_grows_linearly_with_the_rung_length(self):
+        for name, (make, small, big) in self.INPUTS.items():
+            with self.subTest(name):
+                self.assert_linear(lambda n, make=make: (lambda text=make(n): check_rung(text, 1, "r")), small, big)
+
+    def test_operands_are_counted_at_the_instruction_s_own_bracket_depth(self):
+        self.assertEqual(self.warnings("XIC(a);XIO(b);"), [])
+        self.assertEqual(self.warnings("XIC(a,b);"), ["XIC takes 1 operand(s), found 2"])
+        self.assertEqual(self.warnings("MOV(a,,b);"), ["MOV takes 2 operand(s), found 3"])
+        self.assertEqual(self.warnings("COP([a,b],c,d);"), [])  # a comma inside [ ] separates nothing
+        self.assertEqual(self.warnings("XIC(MOV(a,b));"), [])  # nor does one inside a nested instruction
+        self.assertEqual(self.warnings("XIC(MOV(a,b,c));"), ["MOV takes 2 operand(s), found 3"])
+        self.assertEqual(self.warnings("XIC(a));"), [])  # a stray ) closes nothing
+
+    def test_blank_operands_count_as_none(self):
+        self.assertEqual(self.warnings("XIC();"), ["XIC takes 1 operand(s), found 0"])
+        self.assertEqual(self.warnings("XIC( , );"), ["XIC takes 1 operand(s), found 0"])
+        self.assertEqual(self.warnings("MOV(a, );"), [])  # one blank part among others still counts
+
+    def test_an_instruction_without_its_closing_parenthesis_drops_the_last_character(self):
+        # How the checker has always read `XIC(a,b` (operands "a,"): pinned, not endorsed.
+        self.assertEqual(self.warnings("XIC(a,b"), ["XIC takes 1 operand(s), found 2"])
+        self.assertEqual(self.warnings("XIC(a"), ["XIC takes 1 operand(s), found 0"])
+        self.assertEqual(self.warnings("XIC("), ["XIC takes 1 operand(s), found 0"])
+
+    def test_the_mnemonic_skips_leading_digits(self):
+        self.assertEqual(self.warnings("12XIC(a,b);"), ["XIC takes 1 operand(s), found 2"])
+        self.assertEqual(self.warnings("9(a,b);"), [])
+
+    def test_output_coil_operands_are_the_first_operand_stripped(self):
+        self.assertEqual(check_rung("XIC(a)OTE(b);", 1, "r")[1], ["b"])
+        self.assertEqual(check_rung("OTE( x [1] , y );", 1, "r")[1], ["x [1]"])
+        self.assertEqual(check_rung("ote(a);", 1, "r")[1], ["a"])
+        self.assertEqual(check_rung("OTE( , a);", 1, "r")[1], [""])  # as before: an empty first operand is kept
+        self.assertEqual(check_rung("OTE( );", 1, "r")[1], [])
+
+    def test_an_operand_holding_an_instruction_is_not_a_coil(self):
+        # A copy of every enclosing operand grew with the square of the nesting depth (20 KB of
+        # `OTE(` held 40 MB of operands). An operand with a `(` is a nested call, not a tag.
+        self.assertEqual(check_rung("OTE(OTE(a));", 1, "r")[1], ["a"])
+        self.assertEqual(check_rung("OTE((a));", 1, "r")[1], [])
+        self.assertEqual(check_rung("OTE(a, OTE(b));", 1, "r")[1], ["a", "b"])  # a first operand ends at its comma
+        self.assertEqual(check_rung("OTE(" * 400 + ")" * 400 + ";", 1, "r")[1], [])
 
 
 if __name__ == "__main__":

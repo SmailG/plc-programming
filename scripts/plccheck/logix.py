@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from bisect import bisect_left
 from collections import Counter
 
 from .findings import Finding, error, warning, with_context
@@ -24,23 +25,62 @@ ARITY = {
     "JMP": 1, "LBL": 1, "AFI": 0, "NOP": 0, "TND": 0, "MCR": 0, "UID": 0, "UIE": 0,
     "GSV": 4, "SSV": 4, "MSG": 1, "PSC": 0, "PCMD": 3,
 }
-_INSTR = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\(")
+# `NAME(`, found at the start of an identifier run (leading digits skipped). Without the lookbehind every
+# position of a long run would rescan it for a `(`.
+_INSTR = re.compile(r"(?<![A-Za-z0-9_])[0-9]*([A-Za-z_][A-Za-z0-9_]*)\(")
 
 
-def _split_operands(s: str) -> list[str]:
-    parts, depth, cur = [], 0, ""
-    for ch in s:
-        if ch in "([":
+def _instructions(t: str) -> list[tuple[str, int, str | None]]:
+    """(mnemonic, operand count, first operand) for each `NAME(` in the neutral text, in order.
+
+    The operands are the comma-separated parts, at bracket depth 0, between the instruction's
+    parentheses; a missing `)` runs to the end of the text less its last character. The count is 0
+    when every part is blank. The first operand is "" when there is none, and None when it holds a
+    `(`: that is a nested instruction, not a tag, and keeping a copy of it for every instruction
+    around it would grow with the square of the nesting depth.
+
+    One pass over the text: parentheses matched with a stack, commas kept by bracket depth, and the
+    operands of each instruction read from those, so no instruction rescans its own operand text.
+    """
+    n = len(t)
+    depth_before = [0] * (n + 1)  # bracket depth ( [ ) ] before each character
+    text_before = [0] * (n + 1)  # non-whitespace characters before each character
+    close: dict[int, int] = {}  # index of each `(` -> index of its `)`
+    commas: dict[int, list[int]] = {}  # bracket depth -> indexes of the commas at that depth
+    opened: list[int] = []
+    depth = chars = 0
+    for k, ch in enumerate(t):
+        depth_before[k], text_before[k] = depth, chars
+        if ch == ",":
+            commas.setdefault(depth, []).append(k)
+        elif ch == "(":
+            opened.append(k)
             depth += 1
-        elif ch in ")]":
+        elif ch == ")":
+            if opened:
+                close[opened.pop()] = k
             depth -= 1
-        if ch == "," and depth == 0:
-            parts.append(cur)
-            cur = ""
-        else:
-            cur += ch
-    parts.append(cur)
-    return [p.strip() for p in parts] if any(p.strip() for p in parts) else []
+        elif ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+        if not ch.isspace():
+            chars += 1
+    depth_before[n], text_before[n] = depth, chars
+    found: list[tuple[str, int, str | None]] = []
+    for m in _INSTR.finditer(t):
+        start = m.end()
+        end = close.get(start - 1, n - 1)
+        top = commas.get(depth_before[start], [])  # a comma at the depth the operands start at is a separator
+        first, last = bisect_left(top, start), bisect_left(top, end)
+        separators = max(last - first, 0)
+        has_operand = end > start and text_before[end] - text_before[start] > separators
+        first_operand: str | None = ""
+        if has_operand:
+            stop = top[first] if separators else end
+            first_operand = None if t.find("(", start, stop) >= 0 else t[start:stop].strip()
+        found.append((m.group(1).upper(), separators + 1 if has_operand else 0, first_operand))
+    return found
 
 
 def check_rung(text: str, line: int, ctx: str) -> tuple[list[Finding], list[str]]:
@@ -70,17 +110,11 @@ def check_rung(text: str, line: int, ctx: str) -> tuple[list[Finding], list[str]
     if bracket:
         out.append(error("LX021", "unbalanced branch brackets", line, ctx))
     otes: list[str] = []
-    for m in _INSTR.finditer(t):
-        start, depth, i = m.end(), 1, m.end()
-        while i < len(t) and depth:
-            depth += {"(": 1, ")": -1}.get(t[i], 0)
-            i += 1
-        ops = _split_operands(t[start:i - 1])
-        mnem = m.group(1).upper()
-        if mnem in ARITY and len(ops) != ARITY[mnem]:
-            out.append(warning("LX022", f"{mnem} takes {ARITY[mnem]} operand(s), found {len(ops)}", line, ctx))
-        if mnem == "OTE" and ops:
-            otes.append(ops[0])
+    for mnem, count, first_operand in _instructions(t):
+        if mnem in ARITY and count != ARITY[mnem]:
+            out.append(warning("LX022", f"{mnem} takes {ARITY[mnem]} operand(s), found {count}", line, ctx))
+        if mnem == "OTE" and count and first_operand is not None:
+            otes.append(first_operand)
     return out, otes
 
 
