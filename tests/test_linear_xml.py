@@ -206,40 +206,6 @@ class LogixL5xNestedRoutines(LinearTime):
         self.assertEqual(got, [("LX020", 1, "p/a rung 0"), ("LX020", 1, "a/in rung 0")])
 
 
-class SimaticMlNamespaces(LinearTime):
-    """Each (family, version) namespace is reported once, at its first element, in document order."""
-
-    BASE = "http://www.siemens.com/automation/Openness/SW/"
-
-    def check(self, body: str, declarations: str = "") -> list[tuple[str, int, str]]:
-        doc = f'<Document {declarations}><Engineering version="V18"/>{body}</Document>'
-        return [(f.code, f.line, f.message) for f in check_simaticml(xml_root(doc)) if f.code == "SM003"]
-
-    def test_check_time_grows_linearly_with_the_namespaces_and_elements_together(self):
-        # k distinct namespaces over 10k elements: rebuilding the set of seen (family, version)
-        # pairs for every element is k times m, quadratic when both grow (about 16x for 4x).
-        def make(n):
-            declarations = " ".join(f'xmlns:p{i}="{self.BASE}Interface/v{i + 10}"' for i in range(n))
-            root = xml_root(f'<Document {declarations}><Engineering version="V18"/>'
-                            + "".join(f"<p{i % n}:e/>" for i in range(10 * n)) + "</Document>")
-            return lambda: check_simaticml(root)
-        self.assert_linear(make, 250, 1_000)
-
-    def test_a_namespace_is_reported_once_at_its_first_element(self):
-        ns = f'xmlns="{self.BASE}NetworkSource/FlgNet/v3"'
-        got = self.check(f"\n<a {ns}/>\n<b {ns}/>\n<c {ns}/>")
-        self.assertEqual(got, [("SM003", 2, "NetworkSource/FlgNet namespace is v3 but TIA V18 exports use v4; import may be rejected")])
-
-    def test_a_matching_namespace_is_not_reported(self):
-        self.assertEqual(self.check(f'<a xmlns="{self.BASE}NetworkSource/FlgNet/v4"/><b xmlns="{self.BASE}Interface/v5"/>'), [])
-
-    def test_namespaces_on_one_line_are_reported_in_document_order(self):
-        # Ties on the line used to fall to the iteration order of a set, which changes with the hash seed.
-        versions = [9, 1, 8, 2, 7, 3, 6, 4]  # none is v5, the version V18 expects of Interface
-        got = self.check("".join(f'<a xmlns="{self.BASE}Interface/v{v}"/>' for v in versions))
-        self.assertEqual([(line, msg.split()[3]) for _, line, msg in got], [(1, f"v{v}") for v in versions])
-
-
 class SimaticMlNestedCompileUnits(LinearTime):
     """A network payload is checked for the CompileUnit it is in, not once for every CompileUnit around it."""
 

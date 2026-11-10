@@ -52,12 +52,12 @@ def check_simaticml(root: Node) -> list[Finding]:
     if not tia:
         out.append(warning("SM002", "no <Engineering version=…/>; TIA cannot tell which schema generation this is", root.line))
     expected = EXPECTED_NS.get(tia, {})
-    seen_ns: dict[tuple[str, str], int] = {}  # (family, version) -> line of its first element, in document order
+    seen_ns: set[tuple[str, str, int]] = set()
     for node in root.iter():
         m = _NS_RE.match(node.ns) if node.ns else None
-        if m:
-            seen_ns.setdefault((m.group("family"), m.group("ver")), node.line)
-    for (family, ver), line in seen_ns.items():
+        if m and (m.group("family"), m.group("ver")) not in {(f, v) for f, v, _ in seen_ns}:
+            seen_ns.add((m.group("family"), m.group("ver"), node.line))
+    for family, ver, line in sorted(seen_ns, key=lambda x: x[2]):
         want = expected.get(family)
         if want and want != ver:
             out.append(warning("SM003", f"{family} namespace is {ver} but TIA {tia} exports use {want}; import may be rejected", line))
