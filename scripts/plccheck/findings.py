@@ -6,8 +6,7 @@ from dataclasses import dataclass
 
 # A message or context quotes names from the file, and a context is repeated on every finding
 # under it, so one long name times many findings is quadratic in the file size. The longest
-# message the tests produce from ordinary names is 203 characters (ST030, with a 17-character
-# instance name) and the longest context 26; messages that quote a 300-character file name reach 352.
+# message in the tests is 195 characters and the longest context 26.
 MAX_FINDING_TEXT = 400
 ELLIPSIS = "…"
 

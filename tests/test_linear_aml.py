@@ -120,8 +120,8 @@ class AmlLinkedFileParsing(LinearTime):
         self.assertEqual(parse.call_count, 2)
 
     def test_a_name_over_the_file_system_limit_is_a_missing_target_not_a_crash(self):
-        # Path.exists() raises OSError (ENAMETOOLONG) for it on Python 3.9.2 and 3.12.3 and answers
-        # False on 3.14.8 (the versions measured): on 3.14 this passes with or without os.path.
+        # Python 3.9's Path.exists() raises OSError (ENAMETOOLONG) for it, where 3.10 and later
+        # answer False: on a newer Python this passes with or without the os.path calls.
         long_name = "a" * 300 + ".xml"
         with tempfile.TemporaryDirectory() as d:
             path = self.write(d, [f"{long_name}#zz"], tail=f'<ExternalReference Path="{long_name}"/>')

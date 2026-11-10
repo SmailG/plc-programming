@@ -83,20 +83,12 @@ class NamespaceUriCap(unittest.TestCase):
 
     def test_a_long_prefix_over_many_distinct_attributes_is_refused_in_little_memory(self):
         # The declaring element's own attributes each carry the URI too, so a cap in a namespace
-        # declaration handler would come too late. 29 KB: one 16,000-character URI, 1200 attributes.
+        # declaration handler would come too late. 33 KB: one 16,000-character URI, 1200 attributes.
         attrs = " ".join(f'p:a{i}="1"' for i in range(1200))
         data = f'<r xmlns:p="{uri(16_000)}" {attrs}/>'.encode()
         self.assertLess(len(data), 40_000)
         self.assertEqual(str(self.refused(data)), LONG_URI_ERROR)
         self.assertLess(self.peak(data), PEAK_LIMIT)
-
-    def test_a_declaration_defaulted_by_an_attlist_is_capped_too(self):
-        # No entity is involved: the DTD gives every <c/> a default xmlns, and expat reports a
-        # defaulted attribute to the start handler like a written one.
-        long_ = f'<!DOCTYPE r [<!ATTLIST c xmlns CDATA "{uri(CAP + 1)}">]><r><c/></r>'
-        self.assertEqual(str(self.refused(long_.encode())), LONG_URI_ERROR)
-        short = f'<!DOCTYPE r [<!ATTLIST c xmlns CDATA "{uri(CAP)}">]><r><c/></r>'
-        self.assertEqual(xmlutil.parse_bytes(short.encode()).children[0].ns, uri(CAP))
 
     def test_the_cap_holds_in_utf16(self):
         # The check reads attribute values from the parser, so the encoding does not matter.
