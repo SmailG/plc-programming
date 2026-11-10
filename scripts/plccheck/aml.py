@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -21,13 +22,23 @@ def _resolve(ref: str, base: Path) -> tuple[Path | None, str]:
     return (base / p) if p else None, u.fragment
 
 
-def _global_ids(target: Path, cache: dict[Path, set[str] | None]) -> set[str] | None:
+def _file_key(target: Path, st: os.stat_result) -> tuple[int, int] | Path:
+    """What identifies the file behind `target`: its device and inode, else its resolved path.
+
+    The resolved path misses one file under another spelling of its name (`X.XML` for `x.xml` on a
+    case-insensitive file system) and a hard link; the inode does not. A file system that reports
+    no inode (0) falls back to the resolved path, which still joins `./x.xml` and `a/../x.xml`.
+    """
+    return (st.st_dev, st.st_ino) if st.st_ino else target.resolve()
+
+
+def _global_ids(target: Path, cache: dict[tuple[int, int] | Path, set[str] | None]) -> set[str] | None:
     """The globalId and uuid values of a referenced PLCopen file, or None if it is not well-formed XML.
 
     Parsed once per file: every interface that links to the same file would otherwise parse and walk
     it again, so a file of n links to itself costs n parses of an n-link document.
     """
-    key = target.resolve()  # `x.xml`, `./x.xml` and `a/../x.xml` are one file
+    key = _file_key(target, target.stat())
     if key not in cache:
         try:
             doc = parse_file(target)
@@ -73,7 +84,7 @@ def check_aml(root: Node, path: Path | None = None) -> list[Finding]:
                 out.append(warning("AM005", f"InternalLink {side} '{ref}' matches no interface ID in this file", link.line))
 
     base = path.parent if path is not None else None
-    plcopen_ids: dict[Path, set[str] | None] = {}
+    plcopen_ids: dict[tuple[int, int] | Path, set[str] | None] = {}
     for iface in root.iter("ExternalInterface"):
         cls = iface.get("RefBaseClassPath") or ""
         if not any(cls.endswith(c) for c in DATA_CONNECTORS):
@@ -88,14 +99,17 @@ def check_aml(root: Node, path: Path | None = None) -> list[Finding]:
         target, fragment = _resolve(value.text.strip(), base)
         if target is None:
             continue
-        if not target.exists():
+        # os.path, not Path: on Python 3.9 Path.exists() raises ENAMETOOLONG for a name over the
+        # file system's limit, where os.path.exists() answers False. is_file() below only runs
+        # on a name that exists, so it cannot meet that error.
+        if not os.path.exists(target):
             out.append(warning("AM011", f"refURI target {target.name} not found next to this file", value.line))
         elif fragment and cls.endswith("PLCopenXMLInterface") and target.is_file():
             # An absolute refURI can name a directory, FIFO or device; only a regular file is read.
-            ids = _global_ids(target, plcopen_ids)
-            if ids is not None and fragment not in ids:
+            target_ids = _global_ids(target, plcopen_ids)
+            if target_ids is not None and fragment not in target_ids:
                 out.append(warning("AM012", f"refURI fragment #{fragment} matches no globalId in {target.name}", value.line))
     for ext in root.findall("ExternalReference"):
-        if base is not None and ext.get("Path") and not (base / ext.get("Path")).exists():
+        if base is not None and ext.get("Path") and not os.path.exists(base / ext.get("Path")):
             out.append(warning("AM013", f"ExternalReference '{ext.get('Path')}' not found next to this file", ext.line))
     return out
