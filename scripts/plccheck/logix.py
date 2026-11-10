@@ -84,6 +84,21 @@ def check_rung(text: str, line: int, ctx: str) -> tuple[list[Finding], list[str]
     return out, otes
 
 
+def _own_rungs(routine: Node):
+    """Rung elements of this routine in document order, not descending into a nested <Routines>.
+
+    A nested <Routines> is visited by the caller as a scope of its own. Iterating the whole subtree
+    per routine would check a nested rung once for every routine around it.
+    """
+    stack = list(reversed(routine.children))
+    while stack:
+        node = stack.pop()
+        if node.tag == "Rung":
+            yield node
+        if node.tag != "Routines":
+            stack.extend(reversed(node.children))
+
+
 def check_l5x(root: Node) -> list[Finding]:
     out: list[Finding] = []
     if root.tag != "RSLogix5000Content":
@@ -116,7 +131,7 @@ def check_l5x(root: Node) -> list[Finding]:
             if rtype not in ROUTINE_TYPES:
                 out.append(warning("LX010", f"unknown routine Type '{rtype}'", r.line, ctx))
             if rtype == "RLL":
-                for rung in r.iter("Rung"):
+                for rung in _own_rungs(r):
                     text_node = rung.find("Text")
                     if text_node is None:
                         continue

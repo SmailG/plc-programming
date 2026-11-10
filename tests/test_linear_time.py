@@ -15,7 +15,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 
-from plccheck.logix import check_l5k  # noqa: E402
+from plccheck.logix import check_l5k, check_l5x  # noqa: E402
 from plccheck.plcopen import check_iec61131_10  # noqa: E402
 from plccheck.schneider import check_control_expert  # noqa: E402
 from plccheck.simaticml import check_simatic_sd  # noqa: E402
@@ -317,6 +317,64 @@ class SimaticSdBlockStack(LinearTime):
 
     def test_blocks_left_open_are_reported_at_the_end(self):
         self.assertEqual(self.errors("NETWORK\nRUNG\nEND_RUNG"), [(1, "NETWORK opened here is never closed")])
+
+
+class LogixL5xNestedRoutines(LinearTime):
+    """A rung is checked for the routine it is in, not once for every routine around it."""
+
+    def l5x(self, programs: str) -> str:
+        return ('<RSLogix5000Content SchemaRevision="1" SoftwareRevision="1" TargetType="Controller">'
+                f'<Controller><Programs>{programs}</Programs></Controller></RSLogix5000Content>')
+
+    def routine(self, name: str, rungs: str, inner: str = "") -> str:
+        return f'<Routine Name="{name}" Type="RLL"><RLLContent>{rungs}</RLLContent>{inner}</Routine>'
+
+    def rung(self, number: int, text: str) -> str:
+        return f'<Rung Number="{number}"><Text>{text}</Text></Rung>'
+
+    def nested(self, depth: int, text: str) -> str:
+        """`depth` routines, each in the <Routines> of the one before and each with one rung."""
+        out = ""
+        for _ in range(depth):
+            out = self.routine("r", self.rung(0, text), f"<Routines>{out}</Routines>" if out else "")
+        return self.l5x(f'<Program Name="p"><Routines>{out}</Routines></Program>')
+
+    def check(self, programs: str) -> list[tuple[str, int, str | None]]:
+        return [(f.code, f.line, f.context) for f in check_l5x(xml_root(self.l5x(programs)))]
+
+    def test_check_time_grows_linearly_with_the_nesting_depth(self):
+        # Rescanning the whole subtree of every routine for rungs is quadratic in the depth
+        # (about 16x for 4x); one visit per rung is linear (about 4x).
+        def make(n):
+            root = xml_root(self.nested(n, "XIC(a);"))
+            return lambda: check_l5x(root)
+        self.assert_linear(make, 150, 600)
+
+    def test_deeply_nested_routines_report_each_rung_once(self):
+        found = check_l5x(xml_root(self.nested(50, "XIC(a)")))  # no ';': one LX020 per rung
+        self.assertEqual([f.code for f in found], ["LX020"] * 50)
+
+    def test_sibling_routines_keep_their_own_rungs_and_context(self):
+        got = self.check('<Program Name="p"><Routines>\n' + self.routine("a", self.rung(0, "XIC(a)")) + "\n"
+                         + self.routine("b", self.rung(0, "XIC(b)") + self.rung(1, "OTE(c)")) + "</Routines></Program>")
+        self.assertEqual(got, [("LX020", 2, "p/a rung 0"), ("LX020", 3, "p/b rung 0"), ("LX020", 3, "p/b rung 1")])
+
+    def test_coils_are_counted_per_routines_scope(self):
+        got = self.check('<Program Name="p"><Routines>' + self.routine("a", self.rung(0, "OTE(x);") + self.rung(1, "OTE(x);"))
+                         + self.routine("b", self.rung(0, "OTE(x);")) + "</Routines></Program>")
+        self.assertEqual(got, [("LX040", 1, "p")])
+
+    def test_a_routine_nested_without_a_routines_wrapper_keeps_its_rungs_with_the_routine_around_it(self):
+        # Only a <Routines> is visited as a scope of its own; a bare <Routine> inside a routine is not.
+        got = self.check('<Program Name="p"><Routines>' + self.routine("a", self.rung(0, "XIC(a);")
+                         + self.routine("bare", self.rung(1, "XIC(b)"))) + "</Routines></Program>")
+        self.assertEqual(got, [("LX020", 1, "p/a rung 1")])
+
+    def test_rungs_of_a_nested_routines_scope_belong_to_it(self):
+        # Not a valid structure; pinned so the scope is a decision, not an accident of the walk.
+        got = self.check('<Program Name="p"><Routines>' + self.routine("a", self.rung(0, "XIC(a)"),
+                         "<Routines>" + self.routine("in", self.rung(0, "XIC(b)")) + "</Routines>") + "</Routines></Program>")
+        self.assertEqual(got, [("LX020", 1, "p/a rung 0"), ("LX020", 1, "a/in rung 0")])
 
 
 if __name__ == "__main__":
