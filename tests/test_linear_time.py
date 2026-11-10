@@ -15,6 +15,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 
+from plccheck.plcopen import check_iec61131_10  # noqa: E402
 from plccheck.schneider import check_control_expert  # noqa: E402
 from plccheck.xmlutil import parse_bytes  # noqa: E402
 
@@ -88,6 +89,57 @@ class ControlExpertNestedDfb(LinearTime):
             '<FBSource nameOfFBType="B">\n<STSource>FOR i := 1 TO 2 DO </STSource></FBSource>'))
         got = [(f.code, f.line, f.context) for f in check_control_expert(root)]
         self.assertEqual(got, [("ST002", 2, "DFB A (ST)"), ("ST002", 4, "DFB B (ST)")])
+
+
+class Iec61131_10NestedBodies(LinearTime):
+    """Connections and ids are collected in one pass, each for its nearest BodyContent."""
+
+    def project(self, body: str) -> str:
+        return f'<Project schemaVersion="1">{body}</Project>'
+
+    def px121(self, body: str) -> list[tuple[str, int]]:
+        found = check_iec61131_10(xml_root(self.project(body)))
+        self.assertEqual({f.code for f in found}, {"PX121"} if found else set())
+        return [(f.message.split()[4], f.line) for f in found]
+
+    def test_check_time_grows_linearly_with_the_nesting_depth(self):
+        # Scanning the whole subtree of every BodyContent for ids and Connection elements is
+        # quadratic in the depth (about 16x for 4x); one walk is linear (about 4x).
+        def make(n):
+            root = xml_root(self.project('<BodyContent type="x:ST">' * n + "</BodyContent>" * n))
+            return lambda: check_iec61131_10(root)
+        self.assert_linear(make, 500, 2000)
+
+    def test_a_missing_ref_warns_and_a_resolving_one_does_not(self):
+        got = self.px121(
+            '<BodyContent type="x:FBD">\n<Block connectionPointOutId="1"/>\n'
+            '<Connection refConnectionPointOutId="1"/>\n<Connection refConnectionPointOutId="9"/></BodyContent>')
+        self.assertEqual(got, [("9,", 4)])
+
+    def test_ids_resolve_only_inside_their_own_body(self):
+        got = self.px121(
+            '<BodyContent><Block connectionPointOutId="1"/><Connection refConnectionPointOutId="2"/></BodyContent>\n'
+            '<BodyContent><Block connectionPointOutId="2"/><Connection refConnectionPointOutId="1"/></BodyContent>')
+        self.assertEqual(got, [("2,", 1), ("1,", 2)])
+
+    def test_the_body_element_itself_and_deeper_elements_supply_ids(self):
+        got = self.px121(
+            '<BodyContent connectionPointOutId="1"><Pins><Pin connectionPointOutId="2"/></Pins>'
+            '<Connection refConnectionPointOutId="1"/><Connection refConnectionPointOutId="2"/></BodyContent>')
+        self.assertEqual(got, [])
+
+    def test_elements_outside_any_body_are_ignored(self):
+        got = self.px121('<Block connectionPointOutId="1"/><Connection refConnectionPointOutId="2"/>'
+                         '<BodyContent><Connection refConnectionPointOutId="1"/></BodyContent>')
+        self.assertEqual(got, [("1,", 1)])
+
+    def test_nested_body_is_its_own_scope(self):
+        # Not a valid structure; pinned so the scope is a decision, not an accident of the walk.
+        got = self.px121(
+            '<BodyContent><Connection refConnectionPointOutId="1"/>'
+            '<BodyContent><Block connectionPointOutId="1"/><Connection refConnectionPointOutId="2"/></BodyContent>'
+            '<Connection refConnectionPointOutId="3"/></BodyContent>')
+        self.assertEqual(got, [("1,", 1), ("3,", 1), ("2,", 1)])
 
 
 if __name__ == "__main__":

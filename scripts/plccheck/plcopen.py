@@ -242,15 +242,38 @@ def check_iec61131_10(root: Node) -> list[Finding]:
         return [error("PX101", f"root element is <{root.tag}>, expected <Project>", root.line)]
     if root.get("schemaVersion") is None:
         out.append(warning("PX102", "<Project> has no schemaVersion", root.line))
-    for bc in root.iter("BodyContent"):
+    for bc, outs, conns in _bodies_with_connections(root):
         kind = (bc.get("type") or "").rsplit(":", 1)[-1]
         st = bc.find("ST")
         if kind == "ST" and st is not None:
             f, _ = lint_st(st.text, "body")
             out.extend(with_context(f, "IEC 61131-10 ST body", (st.text_line or st.line) - 1))
-        outs = {n.get("connectionPointOutId") for n in bc.iter() if n.get("connectionPointOutId")}
-        for conn in bc.iter("Connection"):
+        for conn in conns:
             ref = conn.get("refConnectionPointOutId")
             if ref and ref not in outs:
                 out.append(warning("PX121", f"Connection refers to connectionPointOutId {ref}, not found in this body", conn.line))
     return out
+
+
+def _bodies_with_connections(root: Node) -> list[tuple[Node, set[str], list[Node]]]:
+    """Each BodyContent in document order, with its connectionPointOutId values and Connection elements.
+
+    One walk over the document: a node counts for its nearest enclosing BodyContent. Scanning the
+    subtree per BodyContent is quadratic when BodyContent elements nest, which a valid file never
+    does. For such a file the scope of PX121 is the nearest body, not every body around it.
+    """
+    bodies: list[tuple[Node, set[str], list[Node]]] = []
+    stack: list[tuple[Node, tuple[Node, set[str], list[Node]] | None]] = [(root, None)]
+    while stack:
+        node, current = stack.pop()
+        if node.tag == "BodyContent":
+            current = (node, set(), [])
+            bodies.append(current)
+        if current is not None:
+            out_id = node.get("connectionPointOutId")
+            if out_id:
+                current[1].add(out_id)
+            if node.tag == "Connection":
+                current[2].append(node)
+        stack.extend((child, current) for child in reversed(node.children))
+    return bodies
