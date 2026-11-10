@@ -56,6 +56,8 @@ git clone https://github.com/SmailG/plc-programming.git .agents/plugins/plc-prog
 
 ## The validator
 
+![Demo: the validator catches a missing END_IF in a Structured Text function block; an AI edit, shown as a diff, adds END_IF, and the validator passes](docs/assets/plc-demo.gif)
+
 ```bash
 python3 scripts/plc_validate.py <files-or-dirs> [--format FMT] [--xsd schema.xsd] [--json] [--strict]
 ```
