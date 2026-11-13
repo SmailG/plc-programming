@@ -75,9 +75,11 @@ versions.
   `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wincc_binvalues.py dump.txt > tag.csv`
   (`timestamp,value,quality`; standard input works too). The query, the `sqlcmd -y` trap that
   truncates long blocks, and the exit codes are in the reference.
-- **Exclude quality other than 192 (`0xC0`) when averaging**; a bad chunk repeats the last good value.
-- A block that fails is reported by line and skipped, and about 0.1 % of blocks failed in a
-  large run (not investigated). A decoded value is not proof the archive was undamaged.
+- **Exclude quality other than 192 (`0xC0`) when averaging**; a bad chunk repeated the last good
+  value on an outage in the source data (observed, no automated check).
+- A block that fails is reported by line and skipped. About 0.1 % of blocks failed in a large run,
+  essentially all on an unknown value code or on the first chunk header of a block written right
+  after a runtime restart (not decoded). A decoded value is not proof the archive was undamaged.
 - **Not decoded**: archives of the compressed type, and the signedness of the 32-bit integer
   code is a guess. Details and what is established:
   [references/wincc-tag-logging-archive.md](references/wincc-tag-logging-archive.md).

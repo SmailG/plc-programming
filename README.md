@@ -114,7 +114,8 @@ python3 scripts/wincc_binvalues.py dump.txt > tag.csv     # or one block as hex 
 Decodes the fast-archive blocks (`TagCompressed.BinValues`) of a Siemens WinCC 7 Tag Logging
 segment to CSV (`timestamp,value,quality`) without WinCC (standard library only, Python 3.9+).
 **The format is undocumented**: the decoder is reverse-engineered on WinCC 7.5 SP2 and untested
-on other versions. It raises an error on anything it does not recognise. The compressed archive
+on other versions. It raises an error for a block that fails its checks; it does not check some
+header bytes, and a damaged value inside the stream can still decode. The compressed archive
 type is not decoded and the signedness of the 32-bit integer code is a guess. A block that fails
 is reported by line and the others are still written. Attach copies of the segments to a
 separate SQL Server instance, never a live WinCC. The workflow, the query and what is established:

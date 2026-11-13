@@ -1,10 +1,12 @@
 """WinCC Tag Logging fast-archive decoder, tested on SYNTHETIC blocks only.
 
 The encoder below is written from the format notes in
-skills/other-platforms/references/wincc-tag-logging-archive.md. It is deliberately independent of
-the decoder (own value table, own bit packing), but it is still the same author's reading of the
-format: a round trip proves the decoder and this encoder agree and that every guard fires, not that
-the format is understood correctly. That is checked on real archives, which are never committed here.
+skills/other-platforms/references/wincc-tag-logging-archive.md. It has its own value table and bit
+packing, but it is still the same author's reading of the format, and it shares the decoder's idea
+of the stream layout: a round trip proves the decoder and this encoder agree and that every guard
+fires, not that the format is understood correctly. Only `test_history_compares_raw_bits` is
+written out by hand, without the encoder; it is still the same reading of the format. Whether the
+format is understood correctly is checked on real archives, which are never committed here.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import datetime
 import io
+import math
 import struct
 import subprocess
 import sys
@@ -82,7 +85,7 @@ def encode_stream(code, values, quals, dst=False):
     starts = [0]
     for m, _ in chunks:
         starts.append(starts[-1] + m)
-    out, hist, nxt = [NEW + value_bits(code, values[0])], [values[0]], 0
+    out, hist, nxt = [NEW + value_bits(code, values[0])], [value_bits(code, values[0])], 0
 
     def headers(done):
         nonlocal nxt
@@ -92,16 +95,16 @@ def encode_stream(code, values, quals, dst=False):
 
     headers(0)
     for k in range(1, len(values)):
-        v = values[k]
-        if v == hist[0]:
+        key = value_bits(code, values[k])   # the history compares raw value bits, not Python equality
+        if key == hist[0]:
             out.append(SAME)
-        elif v in hist:
-            out.append(ref_token(hist.index(v)))
-            hist.remove(v)
-            hist.insert(0, v)
+        elif key in hist:
+            out.append(ref_token(hist.index(key)))
+            hist.remove(key)
+            hist.insert(0, key)
         else:
-            out.append(NEW + value_bits(code, v))
-            hist.insert(0, v)
+            out.append(NEW + key)
+            hist.insert(0, key)
             del hist[HIST:]
         headers(k)
     return "".join(out)
@@ -151,13 +154,13 @@ class RoundTrip(unittest.TestCase):
         self.check(3, [0.5, 1.25, -3.0, 1.25, 1000.0])
 
     def test_int16_is_signed(self):
-        self.check(4, [-9630, 7, 32767, -32768])
+        self.check(4, [-11111, 7, 32767, -32768])
 
     def test_int8_is_signed(self):
         self.check(5, [-90, 0, 127, -128])
 
     def test_uint8_is_unsigned(self):
-        self.check(6, [228, 232, 255, 0])
+        self.check(6, [200, 201, 255, 0])
 
     def test_uint16_is_unsigned(self):
         self.check(7, [60000, 32768, 65535, 1])
@@ -180,6 +183,15 @@ class RoundTrip(unittest.TestCase):
     def test_header_fields(self):
         info = W.decode_values(encode_block([1.0, 2.0, 3.0], period_ms=500))[2]
         self.assertEqual((info["n"], info["period_ms"], info["code"], info["t0"]), (3, 500, 3, T0))
+
+
+class Header(unittest.TestCase):
+    def test_sample_count_and_period_are_four_bytes_wide(self):
+        head = bytearray(37)
+        head[9:13] = (0x00010000).to_bytes(4, "little")
+        head[21:25] = (0x00010000).to_bytes(4, "little")
+        h = W.parse_header(bytes(head))
+        self.assertEqual((h["n"], h["period_ms"]), (65536, 65536))
 
 
 class Chunks(unittest.TestCase):
@@ -234,6 +246,22 @@ class History(unittest.TestCase):
         vals, quals, info = W.decode_values(encode_block(values, code=4))
         self.assertEqual((vals, info["counts"]["ref"]), (values, 1))
 
+    def test_history_compares_raw_bits(self):
+        # Written out by hand, not by the encoder. float32 0.0 is four zero bytes, -0.0 is
+        # 00 00 00 80 (stream order). Python says 0.0 == -0.0; by raw bits they are two entries, so
+        # after NEW 0.0 and NEW -0.0 index 1 is the 0.0 again.
+        stream = (
+            "0" + "00000000" * 4                          # initial value: 0.0
+            + "0000000011" + "00000000" + "11000000"      # chunk header: m = 3, lead 0, q = 0xC0
+            + "0001000000000000"                          # constant, DST bit clear
+            + "0000000011" + "0" * 24 + "11000000"        # m again, tail, q again
+            + "0" + "00000000" * 3 + "10000000"           # NEW: -0.0
+            + "10" + "01"                                 # reference, index 1
+        )
+        vals = W.decode_values(assemble(3, 3, stream))[0]
+        self.assertEqual([math.copysign(1, v) for v in vals], [1.0, -1.0, 1.0])
+        self.assertEqual(vals, [0.0, 0.0, 0.0])
+
     def test_index_19_is_rejected(self):
         # 20 distinct values; the 20th pushes the first out, so a reference to index 19 has no entry
         stream = NEW + value_bits(4, 1) + chunk_header(21, GOOD)
@@ -269,13 +297,11 @@ class Rejects(unittest.TestCase):
     def test_the_control_block_decodes(self):
         self.assertEqual(self.decode(self.GOOD_BLOCK)[0], [1.0, 2.0, 3.0, 2.0])
 
-    def test_empty_input(self):
-        with self.assertRaisesRegex(DecodeError, "shorter than the 37-byte header"):
-            self.decode(b"")
-
     def test_input_shorter_than_the_header(self):
-        with self.assertRaisesRegex(DecodeError, "shorter than the 37-byte header"):
-            self.decode(self.GOOD_BLOCK[:36])
+        for raw in (b"", self.GOOD_BLOCK[:36]):
+            with self.subTest(length=len(raw)), \
+                    self.assertRaisesRegex(DecodeError, "shorter than the 37-byte header"):
+                self.decode(raw)
 
     def test_bad_checksum(self):
         raw = bytes([self.GOOD_BLOCK[0] ^ 0x01]) + self.GOOD_BLOCK[1:]
@@ -295,6 +321,19 @@ class Rejects(unittest.TestCase):
         raw = encode_block([1.0, 2.0], t0_days=1e300)
         with self.assertRaisesRegex(DecodeError, "start time"):
             self.decode(raw)
+
+    def test_start_time_that_is_not_a_number(self):
+        with self.assertRaisesRegex(DecodeError, "start time"):
+            self.decode(encode_block([1.0, 2.0], t0_days=float("nan")))
+
+    def test_a_block_with_zero_samples_is_rejected_even_with_one_sample_in_the_stream(self):
+        raw = assemble(3, 0, encode_stream(3, [1.0], [GOOD]))
+        with self.assertRaisesRegex(DecodeError, "sample count 0"):
+            self.decode(raw)
+
+    def test_a_period_of_zero_is_rejected(self):
+        with self.assertRaisesRegex(DecodeError, "period of 0"):
+            self.decode(encode_block([1.0, 2.0], period_ms=0))
 
     def test_garbage_in_the_unknown_header_bytes_does_not_fail_a_block(self):
         # bytes 25-36 are not understood and not needed: a NaN there must not cost the block
@@ -317,6 +356,19 @@ class Rejects(unittest.TestCase):
                    + self.GOOD_BLOCK[9:] + b"\x00")
         with self.assertRaisesRegex(DecodeError, "trailing bits"):
             self.decode(raw)
+
+    def test_a_whole_zero_byte_after_a_byte_aligned_stream(self):
+        # 8 padding bits, all zero: rejected by the length of the padding alone
+        bits = encode_stream(6, [1, 2, 2], [GOOD] * 3)
+        self.assertEqual(len(bits) % 8, 0, "the test needs a stream that ends on a byte boundary")
+        self.assertEqual(self.decode(assemble(6, 3, bits))[0], [1, 2, 2])
+        with self.assertRaisesRegex(DecodeError, "8 trailing bits"):
+            self.decode(assemble(6, 3, bits + "0" * 8))
+
+    def test_seven_zero_padding_bits_are_accepted(self):
+        bits = encode_stream(6, [1, 1, 1], [GOOD] * 3)
+        self.assertEqual(-len(bits) % 8, 7, "the test needs 7 padding bits")
+        self.assertEqual(self.decode(assemble(6, 3, bits))[0], [1, 1, 1])
 
     def test_a_one_bit_in_the_padding(self):
         values, code = [1, 2, 1, 3, 1], 4
@@ -362,6 +414,14 @@ class Rejects(unittest.TestCase):
         with self.assertRaisesRegex(DecodeError, "unexpected chunk header"):
             self.chunk_fault(lead="00000001")
 
+    def test_chunk_header_with_the_top_bit_of_the_leading_byte_set(self):
+        with self.assertRaisesRegex(DecodeError, "unexpected chunk header"):
+            self.chunk_fault(lead="10000000")
+
+    def test_chunk_header_constant_that_differs_only_in_its_second_last_bit(self):
+        with self.assertRaisesRegex(DecodeError, "unexpected chunk header"):
+            self.chunk_fault(const="0001000000000010")
+
 
 def run_cli(*argv, stdin=""):
     out, err = io.StringIO(), io.StringIO()
@@ -389,6 +449,29 @@ class Cli(unittest.TestCase):
         p = Path(d.name) / "dump.txt"
         p.write_text(text)
         return str(p)
+
+    def write_bytes(self, data):
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        p = Path(d.name) / "dump.txt"
+        p.write_bytes(data)
+        return str(p)
+
+    def test_a_file_with_a_byte_order_mark_decodes(self):
+        path = self.write_bytes(b"\xef\xbb\xbf" + self.BLOCK.hex().encode() + b"\n")
+        self.assertEqual(run_cli(path)[:2], (0, self.CSV))
+
+    def test_a_block_that_runs_past_the_last_date_fails_alone(self):
+        late = encode_block([1.0, 2.0, 3.0], t0=datetime.datetime(9999, 12, 31, 23, 59, 59))
+        code, out, err = run_cli(stdin=late.hex() + "\n" + self.BLOCK.hex() + "\n")
+        self.assertEqual((code, out, "line 1" in err, "Traceback" in err), (1, self.CSV, True, False))
+
+    def test_a_block_whose_first_row_cannot_be_formatted_fails_alone(self):
+        # the sample is representable; adding the half millisecond used for rounding is not
+        late = encode_block([1.0], t0=datetime.datetime(9999, 12, 31, 23, 59, 59, 999800))
+        self.assertEqual(len(W.decode_block(late)), 1)
+        code, out, err = run_cli(stdin=late.hex() + "\n" + self.BLOCK.hex() + "\n")
+        self.assertEqual((code, out, "line 1" in err, "Traceback" in err), (1, self.CSV, True, False))
 
     def test_hex_on_stdin(self):
         self.assertEqual(run_cli(stdin=self.BLOCK.hex() + "\n")[:2], (0, self.CSV))
@@ -425,6 +508,10 @@ class Cli(unittest.TestCase):
     def test_a_dump_line_with_too_few_fields_is_reported(self):
         code, out, err = run_cli(stdin="a|b|c\n")
         self.assertEqual((code, "line 1" in err), (1, True))
+
+    def test_a_dump_line_with_too_many_fields_is_an_error(self):
+        with self.assertRaises(DecodeError):
+            W.block_from_line("a|b|c|" + self.BLOCK.hex() + "|extra")
 
     def test_input_with_no_blocks_exits_1(self):
         code, out, err = run_cli(stdin="\n\n")

@@ -3,15 +3,19 @@
 
     wincc_binvalues.py [DUMP]
 
-DUMP is a file, or `-` or nothing for standard input. Each line is either one block as hex, or
+DUMP is a file, or `-` or nothing for standard input. A file is read as UTF-8 (a byte order mark
+is accepted; a UTF-16 file is refused with exit 2). Each line is either one block as hex, or
 four `|`-separated fields as `sqlcmd` prints them, the last being the hex (the first three are
 ignored; the block's own header carries the start time). Output is CSV on standard output:
 `timestamp,value,quality`, timestamps in UTC to the millisecond, quality as the decimal OPC
 quality byte (192 = 0xC0 = good, 8 = 0x08 = bad / not connected).
 
 The format is undocumented. It was reverse-engineered on WinCC 7.5 SP2 fast archives and is
-untested on other versions; the decoder raises DecodeError on anything it does not recognise
-rather than guessing. Established, guessed and undecoded parts are listed in
+untested on other versions. The decoder raises DecodeError on a block that fails its checks
+(checksum, length, sample count and period, value code, chunk headers, the stream's own
+consistency) rather than guessing. It does not check header bytes 1-3, 5-6 and 25-36, the value of
+a quality byte or the daylight-saving bit, and a damaged value inside the stream can decode.
+Established, guessed and undecoded parts are listed in
 skills/other-platforms/references/wincc-tag-logging-archive.md.
 
 As a library:
@@ -65,8 +69,11 @@ class _Bits:
         return self.s[self.p:self.p + n]
 
 
-def _value(bitstr, kind, width, signed):
-    raw = int(bitstr, 2).to_bytes(width // 8, 'big')   # bytes in stream order
+def _raw(bitstr, width):
+    return int(bitstr, 2).to_bytes(width // 8, 'big')   # bytes in stream order
+
+
+def _value(raw, kind, signed):
     if kind == 'f':
         return struct.unpack('<f', raw)[0]
     return int.from_bytes(raw, 'little', signed=signed)
@@ -84,9 +91,8 @@ def parse_header(b):
     t0 = _ole_date(b, 13)
     period_ms = int.from_bytes(b[21:25], 'little')
     return {
-        'byte0': b[0], 'code': b[4], 'length': int.from_bytes(b[7:9], 'little'),
+        'code': b[4], 'length': int.from_bytes(b[7:9], 'little'),
         'n': n, 't0': t0, 'period_ms': period_ms,
-        'u32_33': int.from_bytes(b[33:37], 'little'),
     }
 
 
@@ -106,7 +112,7 @@ def _chunk_header(bs):
 
 
 def decode_values(b):
-    """Return (values, qualities, info) for one block. Raises DecodeError on any inconsistency."""
+    """Return (values, qualities, info) for one block. Raises DecodeError when a check fails."""
     if len(b) < HEADER_LEN:
         raise DecodeError(f'block of {len(b)} bytes is shorter than the {HEADER_LEN}-byte header')
     xor = 0
@@ -119,10 +125,14 @@ def decode_values(b):
         raise DecodeError(f"length field {h['length']} != {len(b)}")
     if h['code'] not in VALUE_CODES:
         raise DecodeError(f"unknown value code {h['code']}")
+    if h['n'] < 1:
+        raise DecodeError(f"sample count {h['n']} is below 1")
+    if h['period_ms'] == 0:
+        raise DecodeError('period of 0 ms')
     kind, width, signed = VALUE_CODES[h['code']]
     n = h['n']
     bs = _Bits(b[HEADER_LEN:])
-    hist = []
+    hist = []   # raw value bytes, not numbers: 0.0 and -0.0 are two entries (a guess, see the reference page)
 
     def push(v):
         if v in hist:
@@ -133,7 +143,7 @@ def decode_values(b):
 
     if bs.take(1) != '0':
         raise DecodeError('stream does not start with a value token')
-    cur = _value(bs.take(width), kind, width, signed)
+    cur = _raw(bs.take(width), width)
     push(cur)
     vals = [cur]
     left, q = _chunk_header(bs)
@@ -150,7 +160,7 @@ def decode_values(b):
             counts['same'] += 1
         elif bs.peek(1) == '0':
             bs.take(1)
-            cur = _value(bs.take(width), kind, width, signed)
+            cur = _raw(bs.take(width), width)
             push(cur)
             counts['new'] += 1
         else:
@@ -175,13 +185,14 @@ def decode_values(b):
         raise DecodeError(f'{len(pad)} trailing bits left, ones={pad.count("1")}')
     if left != 1:
         raise DecodeError(f'last chunk left={left}, expected 1')
-    # Chunk i covers m_i consecutive samples counted from sample 0, and the counts sum to n:
-    # the tokens read are n - 1, which is sum(m) - left = sum(m) - 1 once left == 1, so no
-    # separate check of the sum is needed. A chunk's header sits in the stream one token after
-    # its first sample, so quality is assigned by these cumulative ranges, not by header position.
+    # Chunk i covers m_i consecutive samples counted from sample 0. For n >= 1 (checked above) the
+    # loop reads exactly n - 1 tokens, which is sum(m) - left = sum(m) - 1 once left == 1, so no
+    # separate check that the counts sum to n is needed. A chunk's header sits in the stream
+    # immediately after its first sample, so quality is assigned by these cumulative ranges, not
+    # by header position.
     quals = [q for m, q in chunks for _ in range(m)]
     info = dict(h, counts=counts, pad_bits=len(pad), chunks=chunks)
-    return vals, quals, info
+    return [_value(r, kind, signed) for r in vals], quals, info
 
 
 def decode_block(b, t0=None):
@@ -189,12 +200,18 @@ def decode_block(b, t0=None):
     vals, quals, info = decode_values(b)
     start = t0 or info['t0']
     step = datetime.timedelta(milliseconds=info['period_ms'])
-    return [(start + k * step, v, q) for k, (v, q) in enumerate(zip(vals, quals))]
+    try:
+        return [(start + k * step, v, q) for k, (v, q) in enumerate(zip(vals, quals))]
+    except OverflowError:
+        raise DecodeError(f"sample times run past the last representable date from {start}")
 
 
 def format_timestamp(dt):
     """UTC to the millisecond, rounded: the header's start time is a double and carries microsecond noise."""
-    dt = dt + datetime.timedelta(microseconds=500)
+    try:
+        dt = dt + datetime.timedelta(microseconds=500)
+    except OverflowError:
+        raise DecodeError(f'timestamp {dt} is too late to format')
     return f'{dt:%Y-%m-%dT%H:%M:%S}.{dt.microsecond // 1000:03d}Z'
 
 
@@ -226,13 +243,14 @@ def convert(lines, out, err):
         if not line.strip():
             continue
         try:
-            rows = decode_block(block_from_line(line))
+            rows = [[format_timestamp(t), format_value(v), q]
+                    for t, v, q in decode_block(block_from_line(line))]
         except DecodeError as e:
             bad += 1
             print(f'line {number}: {e}', file=err)
             continue
         ok += 1
-        writer.writerows([format_timestamp(t), format_value(v), q] for t, v, q in rows)
+        writer.writerows(rows)
     return ok, bad
 
 
@@ -245,7 +263,7 @@ def main(argv=None):
         return e.code
     try:
         if args.dump != '-':
-            with open(args.dump, encoding='utf-8') as fh:
+            with open(args.dump, encoding='utf-8-sig') as fh:
                 lines = fh.read().splitlines()
         else:
             lines = sys.stdin.read().splitlines()
