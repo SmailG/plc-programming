@@ -9,11 +9,13 @@ description: >-
   Designer (L5X/L5K, RLL neutral text XIC/XIO/OTE/TON, v36 IEC mnemonic renames, AOIs,
   FBD_TIMER in ST). Also reading a CODESYS/Machine Expert binary `.project` without the IDE
   (ST text, object inventory, build identity with `info`, comparing two versions with `diff`,
-  where a name is used with `xref`). Use when working with any of these tools or files. For
-  Siemens and Schneider use their dedicated skills.
+  where a name is used with `xref`). Also decoding the fast-archive blocks of a Siemens WinCC
+  Tag Logging segment (`TagCompressed.BinValues`) to CSV without WinCC. Use when working with
+  any of these tools or files. For Siemens PLCs (TIA Portal, S7) and Schneider use their
+  dedicated skills.
 ---
 
-# Other platforms: Beckhoff, CODESYS, ABB, Rockwell
+# Other platforms: Beckhoff, CODESYS, ABB, Rockwell, WinCC archives
 
 Load the reference for the platform in play. Each one lists the file format, the dialect's
 differences from IEC 61131-3, and the traps.
@@ -26,6 +28,7 @@ differences from IEC 61131-3, and the traps.
 | ABB Freelance (DCS) | Freelance 2024 (announced 2024-10-02); manuals read: 2019 | read the `.csv` export; bulk-edit via BDM Excel; **never hand-edit `.prt`/`.csv` for re-import without a backup** | [references/abb.md](references/abb.md) |
 | ABB AC500 (Automation Builder) | CODESYS-based | PLCopenXML, `.export` (same-version only) | [references/abb.md](references/abb.md) |
 | Rockwell Studio 5000 | v38 (Sept 2025) | L5X component exports, RLL neutral text, L5K | [references/rockwell-logix.md](references/rockwell-logix.md) |
+| Siemens WinCC 7 Tag Logging fast archive (SQL Server segment files, no WinCC) | derived on 7.5 SP2; other versions untested | **read only**: `TagCompressed.BinValues` blocks to CSV by script; undocumented format, the compressed archive type is not decoded, and the int32 signedness is a guess | [references/wincc-tag-logging-archive.md](references/wincc-tag-logging-archive.md) |
 
 ## Cross-platform rules
 
@@ -59,6 +62,25 @@ checked on Machine Expert V2.x files only.
   on `graph`: wiring is not decoded.
 - Details, what is decoded and what is a heuristic:
   [references/codesys-project-files.md](references/codesys-project-files.md).
+
+## Reading a WinCC Tag Logging fast archive without WinCC
+
+Process history that lives in swapped-out segment files (`.mdf` / `.ldf`) of a WinCC 7 Tag
+Logging fast archive is stored as compressed blocks in `TagCompressed.BinValues`. The format is
+**undocumented**; the decoder is reverse-engineered on WinCC 7.5 SP2 and untested on other
+versions.
+
+- Attach copies of the segment to a **separate** SQL Server instance (never a live WinCC),
+  dump the blocks of one tag, then
+  `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/wincc_binvalues.py dump.txt > tag.csv`
+  (`timestamp,value,quality`; standard input works too). The query, the `sqlcmd -y` trap that
+  truncates long blocks, and the exit codes are in the reference.
+- **Exclude quality other than 192 (`0xC0`) when averaging**; a bad chunk repeats the last good value.
+- A block that fails is reported by line and skipped, and about 0.1 % of blocks failed in a
+  large run (not investigated). A decoded value is not proof the archive was undamaged.
+- **Not decoded**: archives of the compressed type, and the signedness of the 32-bit integer
+  code is a guess. Details and what is established:
+  [references/wincc-tag-logging-archive.md](references/wincc-tag-logging-archive.md).
 
 Validate: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plc_validate.py <file-or-dir>`.
 
