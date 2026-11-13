@@ -51,7 +51,7 @@ differs, or a block fails to decode, say so and treat the output as unverified.
    ```
 
    ```text
-   sqlcmd -S <server> -d seg1 -s '|' -h -1 -y 0 -Q "<the query above>" > dump.txt
+   sqlcmd -S <server> -d seg1 -s '|' -y 0 -Q "<the query above>" > dump.txt
    ```
 
    This is for a POSIX shell; the `'|'` quoting is shell-specific, so quote the `|` as your shell
@@ -62,8 +62,13 @@ differs, or a block fails to decode, say so and treat the output as unverified.
    **`-y` matters.** `sqlcmd` cuts a `varchar(max)` column to `-y` characters (default 256;
    [sqlcmd utility](https://learn.microsoft.com/sql/tools/sqlcmd/sqlcmd-utility)), and a byte is
    two hex characters, while the block length field is 16 bits (up to 65 535 bytes). `-y 0` is
-   unlimited (Microsoft warns it can be slow on large results). **Not run here:** the bulk run used
-   `-y 8000`, which cuts a block at 4000 bytes. A cut block fails the checksum or the length
+   unlimited (Microsoft warns it can be slow on large results) and prints no header line, so it
+   takes no `-h -1`: `sqlcmd` refuses the pair ("The -h and the -y 0 options are mutually
+   exclusive"). **Do not add `-w`.** Checked on mssql-tools18 with an 80 000-character column:
+   `-y 0` alone wrote one physical line, and `-w 65535` (the largest width) split it into two. A
+   split block reads as failed blocks, because the decoder takes one physical line as one block.
+   Other `sqlcmd` builds were not checked: confirm that the dump has one line per block. The bulk
+   run used `-h -1 -y 8000`, which cuts a block at 4000 bytes. A cut block fails the checksum or the length
    check. The failing blocks of the bulk run were classified later (see Bulk run) and fell into
    other classes, so a cut block did not explain them; the checksum and length checks stay the
    guard against a cut.
