@@ -45,7 +45,7 @@ git clone https://github.com/SmailG/plc-programming.git .agents/plugins/plc-prog
 | `schneider` skill | automatic | Machine Expert (M241/M251/M262), Control Expert (M340/M580), Automation Expert, Modbus, EtherNet/IP, OPC UA |
 | `iec-61131-3` skill | automatic | Ed.2–Ed.4, the five languages, POUs, OOP, data types, the standard library, PLCopen guidelines, Motion and Safety |
 | `exchange-formats` skill | automatic | PLCopen XML (TC6 v2.0/v2.01), IEC 61131-10, AutomationML (IEC 62714), DEXPI / ISO 15926 |
-| `other-platforms` skill | automatic | Beckhoff TwinCAT, CODESYS (incl. reading a binary `.project` offline: ST, build identity, version diff, cross-reference), ABB Freelance (PRT/CSV) / AC500 / 800xA, Rockwell L5X/L5K |
+| `other-platforms` skill | automatic | Beckhoff TwinCAT, CODESYS (incl. reading a binary `.project` offline: ST, build identity, version diff, cross-reference), ABB Freelance (PRT/CSV) / AC500 / 800xA, Rockwell L5X/L5K, Siemens WinCC 7 Tag Logging fast-archive blocks to CSV (offline decoder) |
 | `iec-61499` skill | automatic | event-driven FBs, ECC, 4diac file formats |
 | `packml-isa88-opcua` skill | automatic | PackML states and PackTags, ISA-88 / IEC 61512, OPC UA (OPC 30000/30001/30050) |
 | `/plc-programming:new-pou` | user only | scaffold a POU for a chosen platform and format |
@@ -105,6 +105,22 @@ not crashed on. Prefer a PLCopen XML export from the IDE when you
 can get one, and verify graphical logic in the IDE. Details:
 [codesys-project-files.md](skills/other-platforms/references/codesys-project-files.md).
 
+## The WinCC Tag Logging archive decoder
+
+```bash
+python3 scripts/wincc_binvalues.py dump.txt > tag.csv     # or one block as hex on standard input
+```
+
+Decodes the fast-archive blocks (`TagCompressed.BinValues`) of a Siemens WinCC 7 Tag Logging
+segment to CSV (`timestamp,value,quality`) without WinCC (standard library only, Python 3.9+).
+**The format is undocumented**: the decoder is reverse-engineered on WinCC 7.5 SP2 and untested
+on other versions. It raises an error for a block that fails its checks; it does not check some
+header bytes, and a damaged value inside the stream can still decode. The compressed archive
+type is not decoded and the signedness of the 32-bit integer code is a guess. A block that fails
+is reported by line and the others are still written. Attach copies of the segments to a
+separate SQL Server instance, never a live WinCC. The workflow, the query and what is established:
+[wincc-tag-logging-archive.md](skills/other-platforms/references/wincc-tag-logging-archive.md).
+
 ## Tests and evals
 
 ```bash
@@ -114,7 +130,7 @@ claude plugin eval . --trust-plugin --allow-tools Write Edit "Bash(python3 *)" -
 
 - **Unit tests:** every validator rule is exercised by an input it must catch and by a
   valid control it must pass. The `.project` reader is tested on synthetic projects built in
-  the test, never on a real program. Every shipped template and every `iecst` code block in the
+  the test, never on a real program, and the WinCC decoder on synthetic blocks, never on real archive data. Every shipped template and every `iecst` code block in the
   skills must lint clean.
 - **Evals:** they compare the plugin against a no-plugin baseline on edition facts, SFC
   semantics, a classic scan-cycle bug, PLCopen XML generation, SimaticML namespaces,

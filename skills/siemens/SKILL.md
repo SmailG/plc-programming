@@ -105,3 +105,8 @@ Run `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plc_validate.py <file>`.
 | `.s7dcl` | SD0xx: `NETWORK`/`RUNG` nesting only |
 
 None of these is a TIA compile. Tell the user to compile in TIA and to fix what it reports.
+
+WinCC (classic, 7.x) Tag Logging archive segments are not TIA files. To read the fast-archive
+blocks of one offline, see
+[../other-platforms/references/wincc-tag-logging-archive.md](../other-platforms/references/wincc-tag-logging-archive.md):
+undocumented format, reverse-engineered on WinCC 7.5 SP2.
