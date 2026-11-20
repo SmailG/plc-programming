@@ -39,9 +39,12 @@ Quality is the OPC quality byte:
 
 | Byte | Meaning here |
 |---|---|
-| 192 (`0xC0`) | good |
+| 192 (`0xC0`) | good. Returned by a live WinCC 7 runtime read |
+| 128 (`0x80`) | good. The OK code named in the WinCC scripting manual. A read of either 128 or 192 exits 0 |
 | 8 (`0x08`) | bad / not connected, seen in the archive decoder's source data |
-| 4 (`0x04`) | bad configuration. Seen on a tag the HMI project names and the PLC does not serve. The value column is then not a measurement; a displayed 0 is the failed read |
+| 4 (`0x04`) | bad configuration. Seen on a tag the HMI project names and the PLC does not serve. The value column is then not a measurement; a displayed 0 is the failed read, and the script exits 1 |
+
+A tab or newline inside a text value is written as `\t` or `\n`, so the four columns stay four columns. A numeric value is unchanged.
 
 The quality table is what was seen, not a catalogue of OPC quality codes.
 

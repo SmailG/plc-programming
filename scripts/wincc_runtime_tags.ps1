@@ -12,8 +12,10 @@
 # -Name SomeTag. Repeating -Name on powershell.exe -File does not bind.
 #
 # Output is one TSV line per tag: name, value, quality, error.
-# Quality is the OPC quality byte. 192 (0xC0) is good. Any other known quality,
-# including 4, is a failed read: the value column is not a measurement.
+# Quality is the OPC quality byte. 192 (0xC0) was returned for a good read on
+# WinCC 7, and 128 (0x80) is the OK code in the WinCC scripting manual. Either
+# is a good read. Quality 4 is a failed read: the value column is not a
+# measurement. A tab or newline in a value is written as \t or \n.
 # Exit 0 every tag read good, 1 a tag threw or its quality is not good,
 # 2 the list file or the runtime COM class failed.
 param(
@@ -65,9 +67,10 @@ foreach ($tagName in $names) {
         try { $errorText = [string]$tag.ErrorDescription } catch { $errorText = '' }
         $qualityNumber = 0
         $qualityKnown = [int]::TryParse($quality, [ref]$qualityNumber)
-        $good = $qualityKnown -and (($qualityNumber -band 192) -eq 192)
+        $good = $qualityKnown -and ($qualityNumber -eq 192 -or $qualityNumber -eq 128)
+        $shown = ([string]$value) -replace '\\', '\\' -replace "`t", '\t' -replace "`r", '' -replace "`n", '\n'
         if ($good -and ($lastError -eq '' -or $lastError -eq '0') -and $errorText -eq '') {
-            Write-Output ("{0}`t{1}`t{2}`t" -f $tagName, $value, $quality)
+            Write-Output ("{0}`t{1}`t{2}`t" -f $tagName, $shown, $quality)
         } else {
             $failed = $failed + 1
             $parts = @()
@@ -75,7 +78,7 @@ foreach ($tagName in $names) {
             if ($lastError -ne '' -and $lastError -ne '0') { $parts += ("LastError=" + $lastError) }
             if ($errorText -ne '') { $parts += $errorText }
             $message = ($parts -join '; ') -replace "`t", ' ' -replace "`r|`n", ' '
-            Write-Output ("{0}`t{1}`t{2}`t{3}" -f $tagName, $value, $quality, $message)
+            Write-Output ("{0}`t{1}`t{2}`t{3}" -f $tagName, $shown, $quality, $message)
         }
     } catch {
         $failed = $failed + 1
