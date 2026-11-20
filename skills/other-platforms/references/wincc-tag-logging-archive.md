@@ -83,6 +83,14 @@ differs, or a block fails to decode, say so and treat the output as unverified.
    a gap.
 6. Never commit real archive bytes, tag names or segment names to a public repository.
 
+The newest block of one tag, rather than every block in the segment, is
+`scripts/wincc_latest_block.py sql`. `check` fails when the hex is shorter than the length
+column: a pipe through `Out-File`, or `sqlcmd -w`, cuts the line and the decoder then reports
+a bad block. Write the dump with `sqlcmd -y 0 -o`. A current value for a tag the archive does
+not store is `scripts/wincc_runtime_tags.ps1`, and quality 4 (`0x04`) on that read is a bad
+configuration, not a measured zero. Both are in
+[wincc-runtime-tags.md](wincc-runtime-tags.md).
+
 ## Block header (37 bytes)
 
 | Offset | Size | Meaning | Status |

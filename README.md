@@ -121,6 +121,18 @@ is reported by line and the others are still written. Attach copies of the segme
 separate SQL Server instance, never a live WinCC. The workflow, the query and what is established:
 [wincc-tag-logging-archive.md](skills/other-platforms/references/wincc-tag-logging-archive.md).
 
+The newest block of a tag, and a check that the dump line was not wrapped:
+
+```bash
+python3 scripts/wincc_latest_block.py sql --database SEGMENT --id 1 > query.sql
+python3 scripts/wincc_latest_block.py check dump.txt
+```
+
+A current value, including a tag that is not archived, comes from the running WinCC Runtime
+through 32-bit PowerShell (`scripts/wincc_runtime_tags.ps1`). Use that when the HMI is already
+subscribed and a second OPC UA session to the PLC is the wrong move. Quality 4 is a bad read.
+[wincc-runtime-tags.md](skills/other-platforms/references/wincc-runtime-tags.md).
+
 ## Tests and evals
 
 ```bash
