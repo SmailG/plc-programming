@@ -9,7 +9,7 @@ Two different questions, two tools:
 
 | Question | Tool | What a miss looks like |
 |---|---|---|
-| What is the tag right now, including one that is not archived? | `scripts/wincc_runtime_tags.ps1` | quality other than 192, or the error column |
+| What is the tag right now, including one that is not archived? | `scripts/wincc_runtime_tags.ps1` | quality other than 128 or 192, or the error column |
 | What did an archived tag do in its newest block? | `scripts/wincc_latest_block.py` then `scripts/wincc_binvalues.py`, one tag per file | `check` says the line was cut; no rows means no samples in that segment, not that the tag held still |
 
 The archive format and the rule against attaching a segment to a live WinCC are in
