@@ -10,7 +10,7 @@ Two different questions, two tools:
 | Question | Tool | What a miss looks like |
 |---|---|---|
 | What is the tag right now, including one that is not archived? | `scripts/wincc_runtime_tags.ps1` | quality other than 192, or the error column |
-| What did an archived tag do in its newest block? | `scripts/wincc_latest_block.py` then `scripts/wincc_binvalues.py` | `check` says the line was cut; a tag with no rows did not change in that segment |
+| What did an archived tag do in its newest block? | `scripts/wincc_latest_block.py` then `scripts/wincc_binvalues.py`, one tag per file | `check` says the line was cut; no rows means no samples in that segment, not that the tag held still |
 
 The archive format and the rule against attaching a segment to a live WinCC are in
 [wincc-tag-logging-archive.md](wincc-tag-logging-archive.md). This page does not repeat them.
@@ -25,12 +25,15 @@ session. A disconnected logon still counts. A one-shot scheduled task with
 `/it` runs there:
 
 ```bat
-C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File wincc_runtime_tags.ps1 -Name SomeTag -Name OtherTag
+C:\Windows\SysWOW64\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File wincc_runtime_tags.ps1 -List names.txt
 ```
 
-A name per line in a file works as `-List names.txt`. Lines starting with `#` are
-comments. Output is TSV: name, value, quality, error. Exit 0 when every tag
-read, 1 when the runtime answered but a tag did not, 2 when the COM class did not.
+One name per line. Lines starting with `#` are comments. Repeating `-Name` on
+`powershell.exe -File` does not bind, so a list file is the multi-tag form.
+Output is TSV: name, value, quality, error. Exit 0 when every tag reads good,
+1 when the runtime answered but a tag threw or its quality is not good, 2 when
+the list file or the COM class failed. A missing list file stops before the
+runtime object is created.
 
 Quality is the OPC quality byte:
 
@@ -45,8 +48,10 @@ The quality table is what was seen, not a catalogue of OPC quality codes.
 Alarm configuration is not an alarm. `CC_Alg_AnalogVar` and `CC_Alg_AnalogLimit`
 empty, and `MSMsgs` holding only a template, means the HMI has no limit alarm
 for those tags. A tag can still be read. An archived alarm bit with no rows in
-the open segment did not change during that segment; the live read is its
-current value.
+the open segment has no samples there. That is not proof the tag held still:
+cyclic-selective recording can be stopped while the source changes. Check the
+tag's recording mode and that acquisition is running before treating the
+absence as stability. The live read is the current value.
 
 ## Newest archive block
 
@@ -54,16 +59,21 @@ On the SQL instance WinCC is already using, print the query and let `sqlcmd`
 write the file itself:
 
 ```text
-python3 scripts/wincc_latest_block.py sql --database SEGMENT --id 171 --id 170 > query.sql
+python3 scripts/wincc_latest_block.py sql --database SEGMENT --id 171 > query.sql
 sqlcmd -S localhost\WINCC -E -y 0 -s "|" -i query.sql -o dump.txt
 python3 scripts/wincc_latest_block.py check dump.txt
 python3 scripts/wincc_binvalues.py dump.txt > tag.csv
 ```
+
+One `--id` per dump. The decoder drops the first three columns, including
+`ValueID`, and writes only `timestamp,value,quality`. A second id in the same
+file would mix two series with no tag identity.
 
 `check` fails when the hex is shorter than the length column. That is a line
 wrapped by a pipe into `Out-File` or by `sqlcmd -w`. `-y 0` and `-o` together
 are the combination that kept a block intact. Do not add `-w`. Do not commit
 the dump: it is plant data.
 
-A tag listed in `Archive` with no `TagCompressed` rows in the open segment did
-not change in that segment. It is not a reading of zero.
+A tag listed in `Archive` with no `TagCompressed` rows has no samples in that
+segment. It is not a reading of zero, and it is not proof the tag held still.
+Confirm the recording mode and that acquisition is running before saying so.
