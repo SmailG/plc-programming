@@ -10,9 +10,9 @@ description: >-
   FBD_TIMER in ST). Also reading a CODESYS/Machine Expert binary `.project` without the IDE
   (ST text, object inventory, build identity with `info`, comparing two versions with `diff`,
   where a name is used with `xref`). Also decoding the fast-archive blocks of a Siemens WinCC
-  Tag Logging segment (`TagCompressed.BinValues`) to CSV without WinCC. Use when working with
-  any of these tools or files. For Siemens PLCs (TIA Portal, S7) and Schneider use their
-  dedicated skills.
+  Tag Logging segment (`TagCompressed.BinValues`) to CSV without WinCC, and reading a current
+  WinCC Runtime tag without a second OPC session. Use when working with any of these tools
+  or files. For Siemens PLCs (TIA Portal, S7) and Schneider use their dedicated skills.
 ---
 
 # Other platforms: Beckhoff, CODESYS, ABB, Rockwell, WinCC archives
@@ -29,6 +29,7 @@ differences from IEC 61131-3, and the traps.
 | ABB AC500 (Automation Builder) | CODESYS-based | PLCopenXML, `.export` (same-version only) | [references/abb.md](references/abb.md) |
 | Rockwell Studio 5000 | v38 (Sept 2025) | L5X component exports, RLL neutral text, L5K | [references/rockwell-logix.md](references/rockwell-logix.md) |
 | Siemens WinCC 7 Tag Logging fast archive (SQL Server segment files, no WinCC) | derived on 7.5 SP2; other versions untested | **read only**: `TagCompressed.BinValues` blocks to CSV by script; undocumented format, the compressed archive type is not decoded, and the int32 signedness is a guess | [references/wincc-tag-logging-archive.md](references/wincc-tag-logging-archive.md) |
+| Siemens WinCC 7 live tags (runtime already subscribed) | WinCC 7, 32-bit HMIRuntime COM | **read only**: current value and OPC quality; the newest archive block of a tag, with a check that the dump line was not cut | [references/wincc-runtime-tags.md](references/wincc-runtime-tags.md) |
 
 ## Cross-platform rules
 
@@ -83,6 +84,13 @@ versions.
 - **Not decoded**: archives of the compressed type, and the signedness of the 32-bit integer
   code is a guess. Details and what is established:
   [references/wincc-tag-logging-archive.md](references/wincc-tag-logging-archive.md).
+- A tag the gateway does not read, while WinCC Runtime is already subscribed to it, is read
+  from that runtime. Do not open a second OPC UA session to the PLC.
+  `scripts/wincc_runtime_tags.ps1` is the current value (32-bit PowerShell, interactive logon).
+  `scripts/wincc_latest_block.py` prints the SQL for the newest compressed block and rejects a
+  dump whose hex is shorter than the length column. Quality 4 is a bad read, not a measured 0.
+  An empty analog-alarm table means no limit alarm is configured.
+  [references/wincc-runtime-tags.md](references/wincc-runtime-tags.md).
 
 Validate: `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/plc_validate.py <file-or-dir>`.
 
